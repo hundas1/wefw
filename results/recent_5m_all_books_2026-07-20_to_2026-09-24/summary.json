@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "trades": 22,
+    "wins": 15,
+    "losses": 7,
+    "win_rate": 0.6818181818181818,
+    "net_usd": 1629.4553254547864,
+    "avg_r": 0.35773279869122343,
+    "avg_win_r": 0.9518180834201277,
+    "avg_loss_r": -0.9153070971564284,
+    "profit_factor": 2.2768465732942302,
+    "best_trade_usd": 245.599927995936,
+    "worst_trade_usd": -260.11260144500557,
+    "min_planned_rr": 1.0,
+    "max_dd_usd": 754.1185388544181,
+    "max_dd_closed_usd": 532.5386398857736,
+    "worst_day_usd": -405.148538854417,
+    "best_day_usd": 442.78045355288486,
+    "max_consec_losses": 3,
+    "tp1_hit_rate": 0.6363636363636364
+  },
+  "goals": {
+    "every trade planned >= 1R": true,
+    "single trade >= $11,000": false,
+    "win rate >= 75%": false,
+    "max drawdown < $2,000": true
+  }
+}
