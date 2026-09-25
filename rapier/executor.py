@@ -132,7 +132,9 @@ class Executor:
         self.broker.place_bracket(prefix, side, qty, None if entry is None else round_tick(entry),
                                   round_tick(stop), round_tick(target))
         self.state["orders"][key] = {"attempt": rec["attempt"] + 1, "prefix": prefix, "book": book,
-                                     "status": "sent", "side": side, "qty": qty}
+                                     "status": "sent", "side": side, "qty": qty,
+                                     "levels": [None if entry is None else round_tick(entry),
+                                                round_tick(stop), round_tick(target)]}
         self._note(f"PLACE {book} {'BUY' if side > 0 else 'SELL'} x{qty} "
                    f"entry={'MKT' if entry is None else round_tick(entry)} stop={round_tick(stop)} "
                    f"target={round_tick(target)} [{prefix}]", out)
@@ -230,6 +232,13 @@ class Executor:
                 self._note(f"CANCEL {p} ({k or 'unknown order'}): no longer armed", out)
         for k, o in desired.items():
             rec = self.state["orders"].get(k)
+            if rec and rec.get("prefix") in groups and _moved(rec.get("levels"), o):
+                # the OTE level of a signal moves while its leg develops; the backtest
+                # always uses the current level, so re-price the resting order
+                self.broker.cancel(rec["prefix"])
+                rec["status"] = "cancelled"
+                self._note(f"REPRICE {k}: {rec.get('levels')} -> {[o['entry'], o['stop'], o['tp1']]}", out)
+                groups = {p: g for p, g in groups.items() if p != rec["prefix"]}
             if rec and (rec.get("prefix") in groups or rec.get("status") != "cancelled"):
                 # resting already, or it vanished without us cancelling it (filled / rejected):
                 # never re-send the same signal
@@ -238,3 +247,12 @@ class Executor:
             self._place(k, o["book"], side, o["mnq"], o["entry"], o["stop"], o["tp1"], v.last_close, out)
         self._save()
         return out
+
+
+def _moved(levels, o: dict) -> bool:
+    """Entry moved by a tick, or stop/target by 2+ ticks (ignore 1-tick ATR jitter)."""
+    if not levels:
+        return False
+    e, s, t = levels
+    return (abs(o["entry"] - e) >= 0.25 - 1e-9 or abs(o["stop"] - s) >= 0.5 - 1e-9
+            or abs(o["tp1"] - t) >= 0.5 - 1e-9)

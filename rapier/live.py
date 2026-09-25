@@ -70,26 +70,50 @@ def build_market(params: dict, refresh: bool = True) -> Market:
     return Market.from_1h(d["1h"], frames, base_tf=min(lower, key=lambda x: int(x[:-1])) if lower else "1h")
 
 
-def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None,
-                 risk_scale: float | None = None) -> list[dict]:
-    """Limits the engine would currently have resting, after bias/filter checks.
+def armed_orders(mkt: Market, params: dict, res=None) -> list[dict]:
+    """Limits the engine would fill if price trades through them during the *next* bar.
 
-    ``consumed`` comes from a backtest run over recent history, so a limit is
-    dropped exactly when the engine would have treated it as traded into.
+    Every entry gate the backtest applies at the fill bar is checked here for that
+    bar: bias, filters, anchor not consumed and not too old, session / flat time,
+    per-day trade cap, stop-size range, size >= 1, the daily loss stop and the
+    16:00-18:00 no-entry window. ``res`` is the engine run over recent history
+    (consumed anchors, today's trades, drawdown throttle); computed if omitted.
     """
     books, risk = build(params)
     base = mkt.base
-    if consumed is None:
+    if res is None:
         start = (base.index[-1] - pd.Timedelta(days=20)).strftime("%Y-%m-%d")
         res = run(mkt, books, risk, start=start, close_at_end=False)
-        consumed, risk_scale = res.consumed, res.risk_scale
-    risk_scale = 1.0 if risk_scale is None else risk_scale
+    consumed, risk_scale = res.consumed, res.risk_scale
     step = base.index.to_series().diff().mode().iloc[0]
-    # "now" is the end of the last completed base bar, exactly what the backtest sees
-    now_ns = np.array([(base.index[-1] + step).value])
+    # "now" is the end of the last completed base bar = start of the bar the order would fill in
+    now = base.index[-1] + step
+    now_ns = np.array([now.value])
+    hour = now.hour + now.minute / 60
+    today = D.trading_day(pd.DatetimeIndex([now]))[0]
+    entered, day_pnl = {}, 0.0
+    t = res.trades
+    if len(t):
+        et = pd.DatetimeIndex(pd.to_datetime(t.entry_time))
+        entered = t[D.trading_day(et) == today].groupby("book").size().to_dict()
+        closed = t[t.exit_time.notna()]
+        if len(closed):
+            xt = pd.DatetimeIndex(pd.to_datetime(closed.exit_time))
+            day_pnl = float(closed.pnl[D.trading_day(xt) == today].sum())
+    if day_pnl <= -risk.daily_loss_limit or (risk.flatten_eod and (16.0 <= hour < 18.0 or hour >= risk.flatten_time and hour < 17.5)):
+        return []
+    open_books = {tr.book for tr in res.open_trades}
+    if len(open_books) >= risk.max_open:
+        return []
     feat = mkt.context().iloc[-1]
     out = []
     for b in books:
+        if b.name in open_books or entered.get(b.name, 0) >= b.max_trades_day:
+            continue
+        if b.sessions and not any(a <= hour < z for a, z in b.sessions):
+            continue
+        if b.flat_after is not None and b.flat_after <= hour < 17.5:
+            continue
         s = mkt.setups(b.tf, b.setup)
         k = int(_asof(s.close_time, now_ns)[0])
         if k < 0:
@@ -117,8 +141,12 @@ def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None,
                     continue
             stop = E - side * b.fixed_stop_pts if b.fixed_stop_pts else S["S"][k]
             risk_pts = side * (E - stop)
+            if not (b.min_stop_pts <= risk_pts <= b.max_stop_pts):
+                continue
             budget = b.risk_usd * risk_scale
-            qty = min(risk.max_contracts, int(budget // (risk_pts * risk.point_value))) if risk_pts > 0 else 0
+            qty = min(risk.max_contracts, int(budget // (risk_pts * risk.point_value)))
+            if qty < 1:
+                continue
             e_r, s_r, t_r = tick_bracket(side, E, stop, b.tp1_r)
             out.append({"type": "LIMIT", "book": b.name, "side": "LONG" if side > 0 else "SHORT",
                         "entry": e_r, "stop": s_r, "tp1": t_r, "mnq": qty, "confirm": b.confirm, "key": key})
@@ -145,7 +173,7 @@ def engine_view(mkt: Market, params: dict, lookback_days: int = 20):
         last_exits = closed[(exits == last) & closed.exit_reason.isin(["eod", "flat", "time"])]
         forced = last_exits[["book", "exit_reason"]].rename(columns={"exit_reason": "reason"}).to_dict("records")
     view = View(now=last + step, last_bar=last, last_close=float(base.close.iloc[-1]),
-                armed=armed_orders(mkt, params, res.consumed, res.risk_scale), open_trades=list(res.open_trades),
+                armed=armed_orders(mkt, params, res), open_trades=list(res.open_trades),
                 forced_exits=forced, engine_day_pnl=day_pnl,
                 confirm_books=frozenset(b.name for b in books if b.confirm),
                 book_flat={b.name: b.flat_after for b in books if b.flat_after is not None})
@@ -170,7 +198,7 @@ def cycle(params: dict, broker: EventSink, webhook: str | None, refresh: bool = 
             events.append({"type": "EXIT", "book": t.book, "time": t.exit_time, "price": t.exit_price,
                            "pnl": round(t.pnl, 2), "reason": t.exit_reason})
         state["trades"][key] = {"closed": bool(pd.notna(t.exit_time))}
-    orders = {o["key"]: o for o in armed_orders(mkt, params, res.consumed, res.risk_scale)}
+    orders = {o["key"]: o for o in armed_orders(mkt, params, res)}
     for key, o in orders.items():
         if key not in state["orders"]:
             events.append(o)

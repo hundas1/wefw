@@ -51,6 +51,22 @@ def test_filled_signal_is_never_resent():
     assert not any(m.startswith("PLACE") for m in out)
 
 
+def test_resting_order_is_repriced_when_the_ote_level_moves():
+    b = SimBroker()
+    ex = Executor(b)
+    ex.step(view(armed=[limit()]), wall())
+    first = list(b.groups())[0]
+    # 1-tick stop jitter: keep the order
+    t1 = T0 + pd.Timedelta("1min")
+    assert ex.step(view(t1, armed=[limit(stop=19980.25)]), wall(t1)) == []
+    # the leg extended: entry moved -> cancel and re-place at the new level
+    t2 = T0 + pd.Timedelta("2min")
+    out = ex.step(view(t2, armed=[limit(entry=20004.0, stop=19984.0, tp1=20024.0)]), wall(t2))
+    assert any(m.startswith("REPRICE") for m in out) and any(m.startswith("PLACE") for m in out)
+    (new,) = b.groups()
+    assert new != first and b._g[new].entry == 20004.0 and b._g[first].state == "cancelled"
+
+
 def test_one_position_at_a_time_cancels_other_entries():
     b = SimBroker()
     ex = Executor(b, ExecConfig(live_books=("ote-1h", "teacher-1m")))
