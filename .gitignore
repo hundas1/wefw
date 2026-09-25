@@ -6,3 +6,5 @@ __pycache__/
 data/
 .hoplite/
 .context/
+.env
+fxreplay_work/

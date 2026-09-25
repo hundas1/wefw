@@ -1,0 +1,46 @@
+day,entry_time_ET,side,rapier_backtest_pnl_usd,rapier_exit_reason,fxreplay_pnl_usd,fxreplay_R,fxreplay_exit_time_ET,same_win_or_loss,note
+2026-08-28,08:37,Buy,240.0,target,234.0,0.98R,08:42,yes,
+2026-08-28,09:29,Buy,-246.0,stop,-228.0,N/A,09:30,yes,
+2026-08-28,09:37,Sell,-226.5,stop,-220.5,N/A,09:40,yes,
+2026-08-28,10:21,Sell,-127.0,stop,-125.5,N/A,10:38,yes,
+2026-08-28,11:26,Sell,55.0,flatten,235.0,1.00R,11:34,yes,harness flatten bug: FX Replay kept the trade to target instead of closing at 11:30
+2026-08-31,09:35,Buy,169.0,target,172.0,1.00R,09:47,yes,
+2026-08-31,10:37,Sell,206.0,target,212.0,1.00R,10:39,yes,
+2026-09-01,11:15,Buy,216.0,target,222.0,1.00R,11:22,yes,
+2026-09-02,09:31,Buy,198.0,target,204.0,1.00R,09:31,yes,
+2026-09-02,10:05,Sell,-230.0,stop,-224.0,N/A,10:10,yes,
+2026-09-02,10:54,Buy,210.0,target,214.5,1.00R,11:11,yes,
+2026-09-03,09:37,Buy,226.0,target,141.5,0.99R,09:39,yes,
+2026-09-03,09:38,Buy,143.5,target,230.0,0.98R,09:37,yes,
+2026-09-03,10:19,Sell,166.0,target,169.0,1.00R,10:34,yes,
+2026-09-04,10:12,Buy,167.0,target,170.0,1.00R,10:14,yes,
+2026-09-08,09:35,Buy,-222.0,stop,-236.0,N/A,09:40,yes,
+2026-09-08,10:22,Sell,196.0,target,202.0,1.00R,10:26,yes,
+2026-09-09,10:19,Buy,205.5,target,210.0,1.00R,10:28,yes,
+2026-09-09,11:03,Buy,-201.0,stop,-195.0,N/A,11:09,yes,
+2026-09-10,09:56,Buy,198.0,target,201.0,1.00R,10:01,yes,
+2026-09-10,10:17,Buy,206.0,target,212.0,1.00R,10:19,yes,
+2026-09-10,10:57,Sell,205.0,target,212.5,1.00R,11:01,yes,
+2026-09-11,09:52,Buy,234.0,target,238.5,1.00R,09:54,yes,
+2026-09-11,10:20,Sell,201.0,target,205.5,1.00R,10:31,yes,
+2026-09-11,10:36,Buy,-201.0,stop,-196.5,N/A,10:43,yes,
+2026-09-14,11:05,Sell,-255.0,stop,-250.0,N/A,11:05,yes,
+2026-09-15,10:05,Buy,-222.5,stop,-217.5,N/A,10:07,yes,
+2026-09-16,10:17,Sell,202.5,target,210.0,1.00R,10:31,yes,
+2026-09-16,14:17,Buy,-181.0,stop,-191.0,N/A,14:27,yes,
+2026-09-17,10:57,Buy,201.0,target,200.0,1.01R,11:41,yes,
+2026-09-17,13:33,Buy,257.5,target,257.5,1.02R,15:31,yes,
+2026-09-18,09:55,Buy,-242.0,stop,-236.0,N/A,10:02,yes,
+2026-09-18,10:42,Buy,219.0,target,228.0,1.00R,10:46,yes,
+2026-09-18,11:16,Buy,210.0,target,217.5,1.00R,11:25,yes,
+2026-09-22,10:41,Buy,-244.0,stop,-238.0,N/A,10:42,yes,
+2026-09-23,10:53,Sell,-231.0,stop,-225.0,N/A,10:53,yes,
+2026-09-23,11:22,Sell,225.0,target,232.5,1.00R,11:28,yes,
+2026-09-18,11:05,Sell,,no backtest trade,455.0,0.98R,11:11,,EXTRA FILL: order the simulator cancels silently (one-cancels-all) was left resting
+2026-09-18,10:52,Sell,,no backtest trade,230.0,1.00R,11:02,,EXTRA FILL: order the simulator cancels silently (one-cancels-all) was left resting
+2026-09-16,14:32,Buy,,no backtest trade,-238.0,N/A,14:33,,EXTRA FILL: order the simulator cancels silently (one-cancels-all) was left resting
+2026-09-11,09:46,Sell,,no backtest trade,246.0,1.00R,09:52,,EXTRA FILL: harness cancel arrived 14 s late
+2026-09-07,10:22,Buy,,no backtest trade,-0.5,N/A,10:22,,EXTRA FILL: wrong day (Labor Day chart) before the date check existed - ignore
+2026-09-07,10:05,Sell,,no backtest trade,3.0,0.02R,10:22,,EXTRA FILL: wrong day (Labor Day chart) before the date check existed - ignore
+2026-09-07,09:35,Buy,,no backtest trade,-24.5,N/A,09:57,,EXTRA FILL: wrong day (Labor Day chart) before the date check existed - ignore
+2026-09-01,11:30,Sell,,no backtest trade,-220.0,N/A,11:39,,EXTRA FILL: order the simulator cancels silently (one-cancels-all) was left resting
