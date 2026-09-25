@@ -166,3 +166,36 @@ def TestIbkrFillPriceAndTargetAmend():
     assert b.FillPrice("rp-zz") is None
     assert b.AmendTarget("rp-a", 20049.0) and placed == [tp.order]
     assert tp.order.lmtPrice == 20049.0 and tp.order.transmit
+
+
+def TestTradaraFollowsTheContractRoll(broker, monkeypatch):
+    import datetime as dt
+
+    from rapier.feeds import ibkr as feed
+
+    broker._fixed_symbol, broker.contract_symbol = False, None
+    monkeypatch.setattr(feed, "FrontExpiry", lambda t: dt.date(2026, 12, 18))
+    assert broker.InstrumentId() == "iid-mnq"
+    monkeypatch.setattr(feed, "FrontExpiry", lambda t: dt.date(2027, 3, 19))  # after the roll
+    try:
+        broker.InstrumentId()
+        raise AssertionError("should look up the new contract")
+    except T.TradaraError as e:
+        assert "/MNQH27" in str(e)
+
+
+def TestYahooFailureFallsBackToCache(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    df = pd.DataFrame({"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "volume": [0]},
+                      index=pd.DatetimeIndex([pd.Timestamp("2026-09-01 10:00", tz=D.TZ)], name="time"))
+    path = tmp_path / "NQ_F_1h.csv.gz"
+    df.to_csv(path, compression="gzip", index_label="time")
+    monkeypatch.setattr(D, "CachePath", lambda interval, symbol=D.SYMBOL: path)
+
+    def Boom(*a, **k):
+        raise ConnectionError("yahoo down")
+
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(download=Boom))
+    assert len(D.Fetch("1h")) == 1

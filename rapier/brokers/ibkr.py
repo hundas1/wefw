@@ -25,6 +25,7 @@ class IBKRBroker:
         self.units_per_contract = 1 if root == "MNQ" else 10
         self.allow_live, self.ib = allow_live, ib
         self._c = None
+        self._c_exp = None
         self._start = None
 
     def _Conn(self):
@@ -41,13 +42,15 @@ class IBKRBroker:
         return self.ib
 
     def Contract(self):
-        if self._c is None:
+        from ..feeds.ibkr import FrontExpiry
+
+        # re-resolved at every quarterly roll so a long-running bot follows the data feed
+        exp = FrontExpiry(pd.Timestamp.now(tz=D.TZ))
+        if self._c is None or self._c_exp != exp:
             from ib_async import Future
 
-            from ..feeds.ibkr import FrontExpiry
-
-            exp = FrontExpiry(pd.Timestamp.now(tz=D.TZ))
             self._c = self._Conn().qualifyContracts(Future(self.root, exp.strftime("%Y%m"), "CME", currency="USD"))[0]
+            self._c_exp = exp
         return self._c
 
     def Check(self):

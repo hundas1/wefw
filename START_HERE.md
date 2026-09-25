@@ -28,6 +28,7 @@ It's a rebuild of the owner's older bot, "Bee Sid".
 | one single trade ≥ $11,000 | ❌ not realistic under a $2k drawdown with daily flat. See `docs/WHAT_WE_TRIED.md` |
 | backtest 2025-07-26 → today | ✅ `results/main_2025-07-26_to_2026-09-24/` |
 | checked on a third-party platform | ✅ FX Replay: 37 of 37 trades ended the same way (win or loss) as the backtest. See `docs/verification/` |
+| can it pay a living? | ⚠️ backtest says about $22k/yr per account (about $9.5k if live is half as good); about 5–11 accounts for $100k/yr. **Not proven:** see `docs/PROP_FIRM_INCOME.md` |
 | live trading | ⚠️ code is written and tested with fakes. **Never run against a real IBKR or Tradara account yet.** It needs the owner's own machine and logins |
 
 The owner prefers **honest numbers over pretty ones**. Don't tune settings until a number looks good.
@@ -40,6 +41,7 @@ START_HERE.md          <- you are here
 AGENTS.md              <- short rules for AI assistants working on this repo
 README.md              <- the long version. Has a short "what was built / improved" list near the top
 docs/WHAT_WE_TRIED.md  <- ideas already tested, and what happened. Read before "improving" anything
+docs/PROP_FIRM_INCOME.md <- income estimate, why it's unproven, and the go/no-go plan
 docs/verification/     <- evidence from replaying the trades on FX Replay
 
 rapier/                <- THE BOT (Python package)
@@ -52,6 +54,7 @@ rapier/                <- THE BOT (Python package)
   rapier_config.json   THE SETTINGS actually used (risk per trade, targets, filters per book)
   metrics.py           win rate, drawdown and so on, plus the goal checklist
   report.py            writes the results/ folders (summary, trade list, equity chart)
+  market_hours.py      CME holidays and early closes (so the bot is flat before them)
   optimize.py          searches for better settings, with an out-of-sample guard
   live.py              asks the engine "what orders would you have right now?"
   executor.py          turns that answer into real orders on a broker, with the safety rules
@@ -64,6 +67,7 @@ rapier/                <- THE BOT (Python package)
   brokers/ibkr.py      sends orders to an IBKR PAPER account (for rehearsal)
 
 tests/                 <- automated checks (run `pytest`). One file per area, same names as above
+tools/prop_income.py   <- "how much could this pay on prop accounts?" simulator
 tools/fxreplay/        <- scripts that replay Rapier's orders on fxreplay.com in a browser
 results/               <- saved backtest reports. Each folder is one run
 data/                  <- price cache. NOT in git (see section 5)
@@ -74,7 +78,7 @@ data/                  <- price cache. NOT in git (see section 5)
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"            # add ,ibkr for the Interactive Brokers parts
-pytest                             # should say 42 passed
+pytest                             # should say 47 passed
 rapier fetch                       # download price bars from Yahoo into data/
 rapier backtest --base 1h --start 2025-07-26 --out results/my_run   # main backtest
 rapier backtest --base 1m --start 2026-08-24 --cached              # all books, needs 1m data
@@ -109,7 +113,8 @@ and `1m` adds the 1-minute "teacher" book.
    then rerun the backtests with `--source ibkr`. Right now the short-timeframe books rest on 23–65 days
    of data. That's the biggest weakness.
 2. **Live rehearsal**, owner's machine only: `rapier broker-check`, then several dry-run sessions,
-   then an IBKR paper account with `--arm`, then Tradara with small size.
+   then an IBKR paper account with `--arm`, then one Tradara eval account. Use the 60-day go/no-go rule in
+   `docs/PROP_FIRM_INCOME.md` before adding accounts.
 3. **Tradara: target fix after a fill.** The code can't change an order on Tradara (no documented endpoint),
    so it uses a fixed 2-tick pad. If Tradara has a modify call, add `FillPrice()` and `AmendTarget()` to
    `rapier/brokers/tradara.py`. Copy the IBKR versions; the executor picks them up automatically.

@@ -10,6 +10,7 @@ switch, drops the contaminated bars and back-adjusts older history.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,10 +62,16 @@ def Fetch(interval: str, symbol: str = SYMBOL, refresh: bool = True) -> pd.DataF
     path = CachePath(interval, symbol)
     cached = LoadCsv(path) if path.exists() else None
     if refresh or cached is None:
-        import yfinance as yf
+        try:
+            import yfinance as yf
 
-        new = yf.download(symbol, period=_PERIODS[interval], interval=interval,
-                          progress=False, auto_adjust=False)
+            new = yf.download(symbol, period=_PERIODS[interval], interval=interval,
+                              progress=False, auto_adjust=False)
+        except Exception as e:  # Yahoo outages / API changes must not stop a live bot that has a cache
+            if cached is None:
+                raise
+            logging.getLogger("rapier.data").warning("Yahoo %s download failed (%s); using cached bars", interval, e)
+            new = pd.DataFrame()
         if len(new):
             new = _Normalize(new)
             merged = new if cached is None else pd.concat([cached, new])

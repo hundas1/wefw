@@ -2,6 +2,20 @@
 
 A log so the next person doesn't repeat work. Newest first. Numbers are from backtests unless noted.
 
+## 2026-09-25: final revision, "can it pay a living unattended?"
+- **Income** (`tools/prop_income.py`): about $22.7k/yr per account at backtest quality, and $9.5k/yr if live is half as good.
+  - teacher-1m's edge isn't statistically proven yet (95% range −$17..+$117 per trade).
+  - scalp-5m's is (+$34..+$158).
+  - Details and the go/no-go rule: `docs/PROP_FIRM_INCOME.md`.
+- **Doubling size:** doubles income, but at 50% weaker edge it means 0.66 breaches a year. Default size kept.
+- **Live bugs that would have broken a long unattended run, now fixed:**
+  - brokers kept trading the expiring contract after a quarterly roll;
+  - no holiday early-close flatten;
+  - no reconnect after IB Gateway's daily restart;
+  - a failed cycle left resting orders live and skipped the close flatten;
+  - a Yahoo outage stopped the 1h history load.
+- **Not changed:** the strategy, since that would be tuning to the same small sample. The backtest also doesn't model holiday early closes (live-only rail, about 9 days a year).
+
 ## 2026-09-25: third-party check on FX Replay (18 trading days, 2026-08-28 → 09-23)
 - Replayed Rapier's exact orders on fxreplay.com (`tools/fxreplay/`). **37 of 37 trades ended the same way (win or loss)** as the backtest.
 - **Found:** market-order entries filled −8 to +17 ticks away from the backtest's price, so a few trades were really 0.87–0.99R, not 1R.

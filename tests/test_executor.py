@@ -248,3 +248,19 @@ def TestBrokersWithoutAmendKeepTheStaticPad():
     _, _, out = _MarketEntry(b, 20014.25)
     assert not any("AMEND" in m for m in out)
     assert b.log[0][-1] == 20041.5  # tp1 + 2 x 2 ticks
+
+
+def TestBlindCycleCancelsEntriesAndStillFlattensAtClose():
+    b = SimBroker()
+    ex = Executor(b)
+    ex.Step(MakeView(armed=[MakeLimit()]), Wall())
+    assert list(b.Groups())
+    out = ex.Blind(T0 + pd.Timedelta("5min"))
+    assert any("NO DATA" in m for m in out) and not b.Groups()
+    t1 = T0 + pd.Timedelta("6min")
+    assert any(m.startswith("PLACE") for m in ex.Step(MakeView(t1, armed=[MakeLimit()]), Wall(t1)))  # data back
+    ex.Blind(T0 + pd.Timedelta("7min"))
+    b.PlaceBracket("rp-y", 1, 2, None, 19900, 20100)
+    b.OnBar(T0, 20000, 20001, 19999, 20000)
+    assert not any("FLATTEN" in m for m in ex.Blind(T0 + pd.Timedelta("10min")))  # mid-session: brackets protect it
+    assert any("FLATTEN" in m for m in ex.Blind(pd.Timestamp("2026-09-15 16:45", tz=D.TZ)))

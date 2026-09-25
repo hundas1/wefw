@@ -34,7 +34,7 @@ class IBKRSource:
     def __init__(self, feed):
         from .feeds.ibkr import FrontExpiry
 
-        self.feed = feed.Connect()
+        self.feed = feed  # connected lazily each cycle: IB Gateway restarts daily
         self._front = FrontExpiry
         self.expiry = None
         self.m1 = None
@@ -47,6 +47,7 @@ class IBKRSource:
         self.long_h1, _ = D.RollAdjust(D.Fetch("1h"))
 
     def Market(self, params) -> Market:
+        self.feed.Connect()  # no-op when connected; reconnects after a gateway restart
         now = pd.Timestamp.now(tz=D.TZ)
         if self.m1 is None or self._front(now) != self.expiry:
             self._Init()  # first run, or the contract just rolled: re-stitch
@@ -113,6 +114,11 @@ def Run(broker_kind: str = "none", feed: str = "ibkr", armed: bool = False, once
         except Exception as e:  # keep running; brackets at the broker protect open positions
             log.exception("cycle failed")
             Notify({"type": "ERROR", "mode": mode, "error": repr(e)[:300]}, webhook)
+            try:
+                for msg in ex.Blind():
+                    Notify({"type": "EXEC", "mode": mode, "msg": msg}, webhook)
+            except Exception:
+                log.exception("blind safety step failed")
         if once:
             return
         # wake 3 seconds after the next minute, when the bar that just closed is available

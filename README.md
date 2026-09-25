@@ -42,11 +42,18 @@ Compared with the old Bee Sid bot:
   - order names changing (endless cancel/replace);
   - targets 0.25 short of 1R.
 - **Third-party check on FX Replay:** 37 of 37 trades ended the same way as the backtest. It also exposed market-entry slippage, now fixed.
+- **Runs unattended:**
+  - follows quarterly contract rolls (data and orders);
+  - flat before CME holiday early closes;
+  - reconnects after IB Gateway's daily restart;
+  - if data is lost it cancels resting orders and still flattens at the close;
+  - survives Yahoo outages.
+- **Income check:** `tools/prop_income.py` and `docs/PROP_FIRM_INCOME.md` estimate prop payouts, with an honest verdict and a go/no-go plan.
 - **Handoff:**
   - `START_HERE.md`, `AGENTS.md` and `docs/WHAT_WE_TRIED.md`;
   - plain header at the top of every file;
   - PascalCase function names;
-  - 42 automated tests.
+  - 47 automated tests.
 
 ## Strategy
 
@@ -310,6 +317,8 @@ rapier/replay.py      bar-by-bar replay of the live stack against a simulated br
 rapier/feeds/ibkr.py  IBKR read-only data: live 1m polling, 1m backfill, exact roll stitching
 rapier/brokers/       dry-run + simulator (base.py), Tradara REST (tradara.py), IBKR paper (ibkr.py)
 rapier/report.py      Markdown/JSON/CSV/PNG reports
+rapier/market_hours.py CME holidays and early closes
+tools/prop_income.py  prop-firm payout simulator (see docs/PROP_FIRM_INCOME.md)
 tools/fxreplay/       scripts that replay Rapier's orders on fxreplay.com (third-party check)
 docs/                 WHAT_WE_TRIED.md (tested ideas + results), verification/ (FX Replay evidence)
 ```

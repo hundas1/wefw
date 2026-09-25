@@ -30,6 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import data as D
+from . import market_hours as H
 from .brokers.base import Broker, PrefixFor, RoundOut, RoundTick
 
 log = logging.getLogger("rapier.exec")
@@ -65,6 +66,7 @@ class ExecConfig:
     # market entries can fill worse than the engine's price (FX Replay filled 2 ticks off);
     # widen their targets so reward >= risk still holds for up to this much slippage
     market_slip_ticks: int = 2
+    early_close_buffer: float = 10 / 60  # flatten this long (hours) before a holiday early close
 
     def __post_init__(self):
         bad = set(self.live_books) - set(BRACKET_BOOKS)
@@ -76,6 +78,8 @@ def MarketOpen(t: pd.Timestamp) -> bool:
     t = t.tz_convert(D.TZ)
     h = t.hour + t.minute / 60
     if t.dayofweek == 5 or (t.dayofweek == 4 and h >= 17) or (t.dayofweek == 6 and h < 18):
+        return False
+    if H.IsClosedDay(t.date()) and h < 18:
         return False
     return not (17 <= h < 18)
 
@@ -170,6 +174,32 @@ class Executor:
                 self._Note(f"AMEND {p}: filled {fill}, target {old} -> {new} "
                            f"({rec['r_mult']:.2f}R from the actual fill)", out)
 
+    def Blind(self, wall: pd.Timestamp | None = None) -> list[str]:
+        """No market data this cycle: pull working entries, and still flatten at the day's flat time."""
+        out: list[str] = []
+        wall = wall or pd.Timestamp.now(tz=D.TZ)
+        if not MarketOpen(wall):
+            return out
+        groups = self.broker.Groups()
+        working = [p for p, g in groups.items() if g["state"] == "working"]
+        by_prefix = {rec["prefix"]: rec for rec in self.state["orders"].values() if "prefix" in rec}
+        for p in working:
+            self.broker.Cancel(p)
+            if p in by_prefix:
+                by_prefix[p]["status"] = "cancelled"  # so it is re-placed once data is back
+        if working:
+            self._Note(f"NO DATA: cancelled {len(working)} working entries", out)
+        et = wall.tz_convert(D.TZ)
+        hour = et.hour + et.minute / 60
+        early = H.EarlyClose(et.date())
+        flat_at = min(self.cfg.flatten_time, early - self.cfg.early_close_buffer) if early else self.cfg.flatten_time
+        pos = self.broker.Position()
+        if pos and flat_at <= hour < 18:
+            self.broker.Flatten()
+            self._Note(f"FLATTEN position {pos} (end of day, no data)", out)
+        self._Save()
+        return out
+
     def _Kill(self, reason: str, day: str, out: list) -> None:
         self.broker.Flatten()
         self.state["killed_day"] = day
@@ -208,7 +238,11 @@ class Executor:
             return out
 
         # end of day / book flat times the broker brackets don't know about
-        after_flat = self.cfg.flatten_time <= hour < 18
+        flat_at = self.cfg.flatten_time
+        early = H.EarlyClose(wall.tz_convert(D.TZ).date())
+        if early is not None:
+            flat_at = min(flat_at, early - self.cfg.early_close_buffer)
+        after_flat = flat_at <= hour < 18
         engine_open = [t for t in v.open_trades if t.book in live]
         book_due = any(v.book_flat.get(t.book) is not None and v.book_flat[t.book] <= hour < 18
                        for t in engine_open)

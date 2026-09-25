@@ -74,6 +74,8 @@ class TradaraBroker:
         self.s.headers.update({"User-Agent": UA, "Accept": "application/json",
                                "X-Order-Origin": "prop-firm-rapier"})
         self.contract_symbol = contract_symbol
+        self._fixed_symbol = contract_symbol is not None
+        self._iid_exp = None
         self._iid: str | None = None
         self._access: str | None = None
         self._exp = 0.0
@@ -124,18 +126,19 @@ class TradaraBroker:
 
     # ------------------------------------------------------------ instrument
     def InstrumentId(self) -> str:
-        if self._iid:
-            return self._iid
         from ..feeds.ibkr import FrontExpiry
 
         exp = FrontExpiry(pd.Timestamp.now(tz=D.TZ))
+        if self._iid and (self._fixed_symbol or self._iid_exp == exp):
+            return self._iid
         code = "FGHJKMNQUVXZ"[exp.month - 1]
-        want = self.contract_symbol or f"/{self.root}{code}{exp.year % 100:02d}"
+        # a user-pinned symbol stays fixed; otherwise follow the front contract across rolls
+        want = self.contract_symbol if self._fixed_symbol else f"/{self.root}{code}{exp.year % 100:02d}"
         items = (self._Req("GET", "/v1/instruments", params={"q": self.root, "limit": 100}) or {}).get("items") or []
         for it in items:
             sym = str(it.get("symbol") or "").upper()
             if sym in (want.upper(), want.upper().lstrip("/")):
-                self._iid, self.contract_symbol = str(it["instrument_id"]), want
+                self._iid, self._iid_exp, self.contract_symbol = str(it["instrument_id"]), exp, want
                 return self._iid
         raise TradaraError(f"Tradara instrument {want} not found")
 
