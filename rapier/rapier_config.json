@@ -63,12 +63,30 @@
       "swing_overnight": false,
       "max_contracts": 40,
       "dd_throttle": 800
+    },
+    "teacher": {
+      "enabled": true,
+      "tf": "1m",
+      "fib": 0.705,
+      "min_leg_pts": 55.0,
+      "min_leg_bars": 12,
+      "max_leg_bars": 36,
+      "max_bar_frac": 0.52,
+      "stop": "swing",
+      "fixed_stop_pts": 28.75,
+      "be_at_r": null,
+      "bias": [],
+      "risk": 250,
+      "tp1_r": 1.0,
+      "sessions": "ny_open2h"
     }
   },
   "meta": {
     "note": "Selected by rapier.optimize (4,600 candidates, ranked by the worse of IS/OOS win rate with DD<$2k in both). Scalp 5m book selected on 2026-07-20..08-21 and checked on 2026-08-22..09-24 (only ~70 days of 5m data exist on Yahoo).",
     "in_sample": "2025-07-26..2026-09-24",
-    "out_of_sample": "2024-06-15..2025-07-25"
+    "out_of_sample": "2024-06-15..2025-07-25",
+    "teacher": "1m book = the user's OTE rules from the original Bee Sid bot (ote_user.py / rules_v2), measured origin->confirmed extreme; stop beyond origin and 0.705 fill chosen because they were the only variants profitable on both halves of 2026-08-24..09-24 true-1m data.",
+    "scalp": "5m book re-checked on imported 5m tape: 2026-06-26..08-10 vs 08-11..09-24."
   },
   "is": {
     "trades": 20,

@@ -27,7 +27,8 @@ import numpy as np
 import pandas as pd
 
 from . import data as D
-from .backtest import Market, _asof, _context_ok, run
+from .backtest import TF_DELTA, Market, _asof, _context_ok, run
+from .indicators import ema
 from .system import build, load_params
 
 STATE = D.DATA_DIR / "live_state.json"
@@ -61,8 +62,9 @@ def notify(event: dict, webhook: str | None) -> None:
 
 
 def build_market(params: dict, refresh: bool = True) -> Market:
-    scalp = params["scalp"].get("enabled")
-    lower = tuple(params["scalp"]["tfs"]) if scalp else ()
+    lower = tuple(params["scalp"]["tfs"]) if params["scalp"].get("enabled") else ()
+    if params.get("teacher", {}).get("enabled"):
+        lower = tuple(dict.fromkeys(lower + (params["teacher"]["tf"],)))
     d = D.load_nq(("1h",) + lower, refresh=refresh)
     frames = {tf: d[tf] for tf in lower}
     return Market.from_1h(d["1h"], frames, base_tf=min(lower, key=lambda x: int(x[:-1])) if lower else "1h")
@@ -105,10 +107,16 @@ def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None) -
             if not _context_ok(b, side, 0, arr(feat.pd_pos), arr(feat.vs_midnight), arr(feat.vs_dopen),
                                arr(bool(feat.swept_pdl)), arr(bool(feat.swept_pdh))):
                 continue
-            risk_pts = side * (E - S["S"][k])
+            if b.ema_tf:
+                ef = mkt.frames[b.ema_tf]
+                ei = int(_asof((ef.index + TF_DELTA[b.ema_tf]).asi8, now_ns)[0])
+                if ei < 0 or abs(E - ema(ef["close"].to_numpy()[:ei + 1], 9)[-1]) > b.ema_dist:
+                    continue
+            stop = E - side * b.fixed_stop_pts if b.fixed_stop_pts else S["S"][k]
+            risk_pts = side * (E - stop)
             qty = min(risk.max_contracts, int(b.risk_usd // (risk_pts * risk.point_value))) if risk_pts > 0 else 0
             out.append({"type": "LIMIT", "book": b.name, "side": "LONG" if side > 0 else "SHORT",
-                        "entry": round(E * 4) / 4, "stop": round(S["S"][k] * 4) / 4,
+                        "entry": round(E * 4) / 4, "stop": round(stop * 4) / 4,
                         "tp1": round((E + side * b.tp1_r * risk_pts) * 4) / 4, "mnq": qty,
                         "confirm": b.confirm, "key": f"{b.name}:{side}:{int(S['id'][k])}"})
     return out

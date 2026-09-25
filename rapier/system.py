@@ -14,6 +14,7 @@ SESSIONS = {
     "any": None,
     "ny": ((8.0, 16.0),),
     "ny_am": ((9.5, 12.0),),
+    "ny_open2h": ((9.5, 11.5),),   # 06:30-08:30 PT, the user's morning book
     "lon_ny": ((2.0, 5.0), (8.0, 16.0)),
 }
 
@@ -27,6 +28,10 @@ DEFAULT_PARAMS: dict = {
                  "midnight": False, "sweep": False},
     "scalp": {"enabled": False, "tfs": ["15m", "5m"], "k": 2, "fib": 0.705, "min_leg": 2.0,
               "bias": ["1D", "1h"], "confirm": False, "risk": 250, "tp1_r": 1.0, "sessions": "ny_am"},
+    # The user's 1m OTE ("teacher" rules from the original Bee Sid bot).
+    "teacher": {"enabled": False, "tf": "1m", "fib": 0.705, "min_leg_pts": 55.0, "min_leg_bars": 12,
+                "max_leg_bars": 36, "max_bar_frac": 0.52, "stop": "swing", "fixed_stop_pts": 28.75,
+                "be_at_r": None, "bias": [], "risk": 250, "tp1_r": 1.0, "sessions": "ny_open2h"},
     "risk": {"daily_loss_limit": 800, "max_open": 2, "flatten_eod": True, "swing_overnight": True,
              "max_contracts": 40, "dd_throttle": 1000},
 }
@@ -37,12 +42,15 @@ def load_params(path: Path | str | None = None) -> dict:
     return json.loads(p.read_text())["params"] if p.exists() else DEFAULT_PARAMS
 
 
-def build(params: dict, include_scalp: bool | None = None) -> tuple[tuple[BookConfig, ...], RiskConfig]:
+def build(params: dict, include_scalp: bool | None = None,
+          include_teacher: bool | None = None) -> tuple[tuple[BookConfig, ...], RiskConfig]:
     """Turn a params dict into book configs.
 
     The swing book may hold overnight (``swing_overnight``) while every other
     book is flattened before the close; that is modelled with ``max_hold``
     on the swing book and the global ``flatten_eod`` switch.
+    ``include_scalp`` / ``include_teacher`` override the enabled flags (the
+    lower-timeframe books need a 5m / 1m execution clock).
     """
     books = []
     r = params["risk"]
@@ -72,6 +80,19 @@ def build(params: dict, include_scalp: bool | None = None) -> tuple[tuple[BookCo
                 bias_tfs=tuple(sc["bias"]), sessions=SESSIONS[sc["sessions"]], risk_usd=sc["risk"],
                 tp1_r=sc["tp1_r"], confirm=sc["confirm"], max_trades_day=2, max_age=150,
                 min_stop_pts=3.0, max_stop_pts=80.0))
+    te = params.get("teacher", DEFAULT_PARAMS["teacher"])
+    if (te.get("enabled") if include_teacher is None else include_teacher):
+        fl = SESSIONS[te["sessions"]]
+        books.append(BookConfig(
+            name=f"teacher-{te['tf']}", tf=te["tf"],
+            setup=SetupParams(k=2, fib=te["fib"], min_leg_atr=0.0, max_leg_atr=1e9,
+                              min_leg_pts=te["min_leg_pts"], min_leg_bars=te["min_leg_bars"],
+                              max_leg_bars=te["max_leg_bars"], max_bar_frac=te["max_bar_frac"],
+                              require_bos=False, mode="impulse"),
+            bias_tfs=tuple(te["bias"]), sessions=fl, flat_after=max(z for _, z in fl),
+            risk_usd=te["risk"], tp1_r=te["tp1_r"], be_at_r=te["be_at_r"],
+            fixed_stop_pts=te["fixed_stop_pts"] if te["stop"] == "fixed" else None,
+            max_trades_day=3, max_age=90, min_stop_pts=3.0, max_stop_pts=80.0))
     risk = RiskConfig(daily_loss_limit=r["daily_loss_limit"], max_open=r["max_open"],
                       flatten_eod=r["flatten_eod"], max_contracts=r["max_contracts"],
                       dd_throttle=r["dd_throttle"], swing_overnight=r.get("swing_overnight", False))

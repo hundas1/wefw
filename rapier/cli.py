@@ -12,15 +12,21 @@ from . import data as D
 def _market(base_tf: str, refresh: bool):
     from .backtest import Market
 
-    lower = () if base_tf == "1h" else ("15m", "5m")
+    lower = {"1h": (), "5m": ("15m", "5m"), "1m": ("15m", "5m", "1m")}[base_tf]
     d = D.load_nq(("1h",) + lower, refresh=refresh)
     return Market.from_1h(d["1h"], {tf: d[tf] for tf in lower}, base_tf=base_tf), d["rolls"]
 
 
 def cmd_fetch(a):
-    for iv in ("1h", "15m", "5m"):
+    for iv in ("1h", "15m", "5m", "1m"):
         df = D.fetch(iv)
         print(f"{iv}: {len(df)} bars {df.index[0]} -> {df.index[-1]}")
+
+
+def cmd_import(a):
+    for path in a.paths:
+        added, rejected = D.import_tape(path, a.interval)
+        print(f"{path}: +{added} bars, {rejected} non-native day(s) rejected")
 
 
 def cmd_backtest(a):
@@ -33,7 +39,7 @@ def cmd_backtest(a):
     elif a.mode == "swing":
         params["risk"]["swing_overnight"] = True
     mkt, rolls = _market(a.base, refresh=not a.cached)
-    books, risk = build(params, include_scalp=a.base != "1h")
+    books, risk = build(params, include_scalp=a.base != "1h", include_teacher=a.base == "1m")
     from .backtest import run
 
     res = run(mkt, books, risk, start=a.start, end=a.end)
@@ -69,11 +75,16 @@ def main(argv=None):
     f = sub.add_parser("fetch", help="download / extend the local bar cache")
     f.set_defaults(fn=cmd_fetch)
 
+    im = sub.add_parser("import", help="merge saved OHLCV tapes (CSV) into the cache")
+    im.add_argument("interval", choices=["1m", "5m", "15m", "1h"])
+    im.add_argument("paths", nargs="+")
+    im.set_defaults(fn=cmd_import)
+
     b = sub.add_parser("backtest", help="run the backtest and write a report")
     b.add_argument("--start", default="2025-07-26")
     b.add_argument("--end", default=None)
-    b.add_argument("--base", default="1h", choices=["1h", "5m"],
-                   help="execution clock; 5m enables the 15m/5m scalp books (~60 days of Yahoo data)")
+    b.add_argument("--base", default="1h", choices=["1h", "5m", "1m"],
+                   help="execution clock; 5m adds the scalp books, 1m also the teacher 1m OTE book")
     b.add_argument("--mode", default="config", choices=["config", "prop", "swing"],
                    help="prop = everything flat daily; swing = swing book may hold overnight")
     b.add_argument("--config", default=None)

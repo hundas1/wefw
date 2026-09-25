@@ -30,6 +30,15 @@ class SetupParams:
     max_leg_atr: float = 12.0
     stop_buf_atr: float = 0.1
     require_bos: bool = True
+    # teacher (user) impulse-shape rules, see README "Teacher OTE"
+    min_leg_pts: float = 0.0     # absolute impulse size floor
+    min_leg_bars: int = 0        # bars from anchor to extreme
+    max_leg_bars: int = 10**9
+    max_bar_frac: float = 1.0    # largest single-bar range / leg; above = spike, not a curve
+    # "structure": anchor = latest confirmed swing (HTF style).
+    # "impulse":   extreme = latest confirmed swing, origin = deepest opposite wick within
+    #              max_leg_bars before it (the user's 1m method: measure the whole impulse).
+    mode: str = "structure"
 
 
 @dataclass
@@ -45,6 +54,8 @@ class Setups:
 
 
 def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Setups:
+    if p.mode == "impulse":
+        return _find_impulse_setups(df, tf_delta, p)
     h, l = df["high"].to_numpy(), df["low"].to_numpy()
     n = len(h)
     a = atr(df)
@@ -72,6 +83,8 @@ def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Set
             A = l[j]
             D = H - A
             ok = D >= p.min_leg_atr * a[i] and D <= p.max_leg_atr * a[i]
+            if ok:
+                ok = _shape_ok(p, D, hi_rel, h, l, j)
             if ok and p.require_bos:
                 b = prev_pivot(ph_idx, j)
                 ok = b >= 0 and H > h[b]
@@ -88,6 +101,8 @@ def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Set
             A = h[j]
             D = A - Lo
             ok = D >= p.min_leg_atr * a[i] and D <= p.max_leg_atr * a[i]
+            if ok:
+                ok = _shape_ok(p, D, lo_rel, h, l, j)
             if ok and p.require_bos:
                 b = prev_pivot(pl_idx, j)
                 ok = b >= 0 and Lo < l[b]
@@ -97,6 +112,53 @@ def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Set
                 Sh["A"][i], Sh["H"][i], Sh["D"][i], Sh["id"][i] = A, Lo, D, j
                 Sh["x"][i] = j + lo_rel
 
+    close_time = (df.index + tf_delta).asi8
+    plp = np.where(ll >= 0, l[np.maximum(ll, 0)], np.nan)
+    php = np.where(lh >= 0, h[np.maximum(lh, 0)], np.nan)
+    return Setups(df.index, close_time, a, L, Sh, plp, php)
+
+
+def _shape_ok(p: SetupParams, D: float, rel: int, h: np.ndarray, l: np.ndarray, j: int) -> bool:
+    if D < p.min_leg_pts or not (p.min_leg_bars <= rel <= p.max_leg_bars):
+        return False
+    if p.max_bar_frac < 1.0 and D > 0:
+        biggest = float((h[j:j + rel + 1] - l[j:j + rel + 1]).max())
+        if biggest / D > p.max_bar_frac:
+            return False
+    return True
+
+
+def _find_impulse_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Setups:
+    h, l = df["high"].to_numpy(), df["low"].to_numpy()
+    n = len(h)
+    a = atr(df)
+    ph, pl = pivots(h, l, p.k)
+    lh, ll = last_confirmed(ph, p.k), last_confirmed(pl, p.k)
+    W = int(min(p.max_leg_bars, 10**6))
+    fields = ("E", "S", "A", "H", "D", "id", "x")
+    L = {f: np.full(n, np.nan) for f in fields}
+    Sh = {f: np.full(n, np.nan) for f in fields}
+    for i in range(n):
+        x = lh[i]  # long: the extreme is the last confirmed swing high
+        if x >= 1 and h[x] >= h[x:i + 1].max():
+            lo0 = max(0, x - W)
+            o = lo0 + int(l[lo0:x].argmin())
+            A, H = l[o], h[x]
+            D = H - A
+            if (p.min_leg_atr * a[i] <= D <= p.max_leg_atr * a[i] and _shape_ok(p, D, x - o, h, l, o)
+                    and l[x:i + 1].min() >= A):
+                L["E"][i], L["S"][i] = H - p.fib * D, A - p.stop_buf_atr * a[i]
+                L["A"][i], L["H"][i], L["D"][i], L["id"][i], L["x"][i] = A, H, D, o, x
+        x = ll[i]  # short: the extreme is the last confirmed swing low
+        if x >= 1 and l[x] <= l[x:i + 1].min():
+            lo0 = max(0, x - W)
+            o = lo0 + int(h[lo0:x].argmax())
+            A, Lo = h[o], l[x]
+            D = A - Lo
+            if (p.min_leg_atr * a[i] <= D <= p.max_leg_atr * a[i] and _shape_ok(p, D, x - o, h, l, o)
+                    and h[x:i + 1].max() <= A):
+                Sh["E"][i], Sh["S"][i] = Lo + p.fib * D, A + p.stop_buf_atr * a[i]
+                Sh["A"][i], Sh["H"][i], Sh["D"][i], Sh["id"][i], Sh["x"][i] = A, Lo, D, o, x
     close_time = (df.index + tf_delta).asi8
     plp = np.where(ll >= 0, l[np.maximum(ll, 0)], np.nan)
     php = np.where(lh >= 0, h[np.maximum(lh, 0)], np.nan)

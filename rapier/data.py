@@ -77,6 +77,40 @@ def fetch(interval: str, symbol: str = SYMBOL, refresh: bool = True) -> pd.DataF
     return cached
 
 
+def native_days(df: pd.DataFrame, max_repeat: float = 0.1) -> pd.DataFrame:
+    """Keep only trading days whose bars are genuinely at this resolution.
+
+    Some saved "1m" tapes are coarser bars forward-filled onto a 1m grid (every
+    bar repeated 2-5 times). Such days fake intrabar detail, so any day where
+    more than ``max_repeat`` of the rows exactly repeat the previous OHLC is dropped.
+    """
+    rep = df[["open", "high", "low", "close"]].diff().abs().sum(axis=1).eq(0)
+    td = trading_day(df.index)
+    share = rep.groupby(td).mean()
+    good = share[share <= max_repeat].index
+    return df[td.isin(good)]
+
+
+def import_tape(path: str | Path, interval: str, symbol: str = SYMBOL) -> tuple[int, int]:
+    """Merge an external OHLCV CSV into the local cache (validated, native days only).
+
+    Existing cached bars win on overlap. Returns (rows added, days rejected).
+    """
+    new = load_csv(path)
+    step = new.index.to_series().diff().mode().iloc[0]
+    if step != pd.Timedelta(interval):
+        raise ValueError(f"{path}: bar spacing {step} does not match {interval}")
+    kept = native_days(new)
+    rejected = trading_day(new.index).nunique() - trading_day(kept.index).nunique()
+    p = cache_path(interval, symbol)
+    cached = load_csv(p) if p.exists() else kept.iloc[:0]
+    merged = pd.concat([kept, cached])
+    merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(p, compression="gzip", index_label="time")
+    return len(merged) - len(cached), rejected
+
+
 # --------------------------------------------------------------------------- rolls
 
 def third_friday(year: int, month: int) -> dt.date:
@@ -197,9 +231,11 @@ def load_nq(intervals=("1h",), refresh: bool = True) -> dict[str, pd.DataFrame]:
     for iv in intervals:
         if iv == "1h":
             continue
-        raw = fetch(iv, refresh=refresh)
-        adj, _ = roll_adjust(raw, rolls)
-        out[iv] = adj
+        if iv == "15m" and cache_path("5m").exists():
+            # 5m history reaches further back (imported tapes); 15m = resampled 5m
+            out[iv] = resample(roll_adjust(fetch("5m", refresh=refresh), rolls)[0], "15min")
+            continue
+        out[iv] = roll_adjust(fetch(iv, refresh=refresh), rolls)[0]
     return out
 
 

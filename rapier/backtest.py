@@ -22,7 +22,7 @@ import pandas as pd
 
 from . import data as D
 from .features import context
-from .indicators import structure_trend
+from .indicators import ema, structure_trend
 from .strategy import SetupParams, Setups, find_setups
 
 TICK = 0.25
@@ -56,10 +56,17 @@ class BookConfig:
     sweep: bool = False              # longs after a prior-day-low sweep, shorts after a PDH sweep
     confirm: bool = False            # wait for a rejection close in the OTE, enter at that close
     confirm_bars: int = 3
+    fixed_stop_pts: float | None = None  # stop = entry -/+ this many points instead of beyond the anchor
+    be_at_r: float | None = None     # move stop to entry once price has moved this many R in favour
+    flat_after: float | None = None  # ET hour after which this book is flattened / stops entering
+    ema_tf: str | None = None        # golden-belt 9EMA confluence: OTE entry within ema_dist of EMA9(ema_tf)
+    ema_dist: float = 10.0
 
     def __post_init__(self):
         if self.tp1_r < 1.0:
             raise ValueError("Rapier never plans a trade below 1R")
+        if self.be_at_r is not None and self.be_at_r <= 0:
+            raise ValueError("be_at_r must be positive")
 
 
 @dataclass(frozen=True)
@@ -221,7 +228,15 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                 sess |= (hours >= a) & (hours < z)
         else:
             sess = np.ones(n, bool)
-        ctx.append(dict(cfg=b, s=s, tf_idx=tf_idx, bias=bias, sess=sess))
+        if b.flat_after is not None:
+            sess &= ~((hours >= b.flat_after) & (hours < 17.5))
+        ema_at = None
+        if b.ema_tf:
+            ef = mkt.frames[b.ema_tf]
+            ev = ema(ef["close"].to_numpy(), 9)
+            ei = _asof((ef.index + TF_DELTA[b.ema_tf]).asi8, t_ns)
+            ema_at = np.where(ei >= 0, ev[np.maximum(ei, 0)], np.nan)
+        ctx.append(dict(cfg=b, s=s, tf_idx=tf_idx, bias=bias, sess=sess, ema=ema_at))
 
     realized = 0.0
     peak = 0.0
@@ -261,6 +276,10 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                 close_qty(tr, tr.qty_open, o[i] - tr.side * slip, when, "eod")
                 del open_pos[bi_]
                 continue
+            if cfg.flat_after is not None and cfg.flat_after <= hours[i] < 17.5:
+                close_qty(tr, tr.qty_open, o[i] - tr.side * slip, when, "flat")
+                del open_pos[bi_]
+                continue
             adverse = l[i] if tr.side > 0 else h[i]
             favor = h[i] if tr.side > 0 else l[i]
             tr.mfe_pts = max(tr.mfe_pts, tr.side * (favor - tr.entry))
@@ -275,6 +294,9 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
             if tr.qty_open == 0:
                 del open_pos[bi_]
                 continue
+            if cfg.be_at_r and not tr.tp1_hit and tr.mfe_pts >= cfg.be_at_r * tr.risk_pts \
+                    and tr.side * (tr.entry - tr.cur_stop) > 0:
+                tr.cur_stop = tr.entry  # applies from the next bar on
             if cfg.trail and tr.tp1_hit:
                 s = ctx[bi_]["s"]
                 k = ctx[bi_]["tf_idx"][i]
@@ -304,7 +326,10 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                     pending.pop(bi_)
                 elif side * (c[i] - o[i]) > 0 and side * (c[i] - pd_["E"]) > 0:
                     pending.pop(bi_)
-                    _open(pd_["cfg"], bi_, side, c[i] + side * slip, stop, pd_["H"], pd_["D"], when, i,
+                    entry = c[i] + side * slip
+                    if pd_["cfg"].fixed_stop_pts:
+                        stop = entry - side * pd_["cfg"].fixed_stop_pts
+                    _open(pd_["cfg"], bi_, side, entry, stop, pd_["H"], pd_["D"], when, i,
                           pd_["feat"], trades, open_pos, day_count, td, risk, dd_now, close_qty,
                           c, l, h, confirm_bar=True)
                 continue
@@ -330,8 +355,14 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                     continue
                 if not _context_ok(cfg, side, i, f_pd, f_mid, f_dop, f_spl, f_sph):
                     continue
+                if cx["ema"] is not None:
+                    ev = cx["ema"][i]
+                    if math.isnan(ev) or abs(E - ev) > cfg.ema_dist:
+                        continue
                 fill = min(o[i], E) if side > 0 else max(o[i], E)
                 stop = S["S"][k]
+                if cfg.fixed_stop_pts:
+                    stop = fill - side * cfg.fixed_stop_pts
                 f = {}
                 if record_features:
                     f = {kk: int(v[i]) for kk, v in trend_feats.items()} | {
