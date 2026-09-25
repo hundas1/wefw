@@ -38,7 +38,7 @@ Always check on data the settings weren't tuned on.
 ```
 START_HERE.md          <- you are here
 AGENTS.md              <- short rules for AI assistants working on this repo
-README.md              <- the long version: strategy rules, all results, live setup
+README.md              <- the long version. Has a short "what was built / improved" list near the top
 docs/WHAT_WE_TRIED.md  <- ideas already tested, and what happened. Read before "improving" anything
 docs/verification/     <- evidence from replaying the trades on FX Replay
 

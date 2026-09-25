@@ -16,6 +16,38 @@ standalone, tested, look-ahead-free engine with a backtester, a refinement loop 
 > The **5m scalp book on its own is at 75% (21 of 28 trades)** across three separate periods, including
 > 7 trades on data it had never seen (6 won). That is the closest thing to the 75% goal, on a small sample.
 
+## What was built / improved (short list)
+
+Compared with the old Bee Sid bot:
+- **Engine:** no look-ahead; trades 4h, 1h, 5m and 1m OTE setups, each only with the bigger trend.
+- **Your 1m rules** were added as the `teacher-1m` book. Breakeven at 0.5R was dropped because tests showed it hurt.
+- **Strict backtest:**
+  - fills: stop wins a same-bar tie; limits need a 1-tick trade-through; market entries fill at the next bar's open;
+  - costs are included;
+  - prop rules: $2k drawdown limit, daily loss stop, flat by 16:40 ET.
+- **≥1R on every trade**, enforced in 3 places: settings check, order check, and after a live fill (the target is moved to the real fill price).
+- **Data fixes:**
+  - contract-roll jumps are removed;
+  - fake "1m" data from the old bot is refused;
+  - IBKR 1m history download is available.
+- **Honest tuning:** settings search with an out-of-sample guard. Curve-fit configs were rejected, including the $11.6k-trade one.
+- **Live trading:** IBKR data → engine → Tradara (or IBKR paper) orders. Safety rails:
+  - dry run by default; real orders need 2 switches;
+  - daily kill switch and stale-data guard;
+  - account allowlist;
+  - order-id deduplication, so a restart never repeats an order.
+- **Bugs found and fixed by replaying live vs backtest:**
+  - 52 extra trades from ungated orders;
+  - stale order prices;
+  - order names changing (endless cancel/replace);
+  - targets 0.25 short of 1R.
+- **Third-party check on FX Replay:** 37 of 37 trades ended the same way as the backtest. It also exposed market-entry slippage, now fixed.
+- **Handoff:**
+  - `START_HERE.md`, `AGENTS.md` and `docs/WHAT_WE_TRIED.md`;
+  - plain header at the top of every file;
+  - PascalCase function names;
+  - 42 automated tests.
+
 ## Strategy
 
 For each timeframe the engine looks for an OTE setup (longs shown; shorts mirror):
