@@ -128,6 +128,11 @@ def test_confirm_book_sends_market_bracket_on_entry_bar():
     tr = SimpleNamespace(book="scalp-5m", side=1, qty=5, entry=20010.25, cur_stop=19980.0, tp1=20040.5, entry_time=T0)
     out = ex.step(view(open_trades=[tr], confirm_books=frozenset({"scalp-5m"})), wall())
     assert any("entry=MKT" in m for m in out)
+    # target widened by 2 x 2 ticks: still >= 1R if the market fill is 2 ticks worse
+    (g,) = b._g.values()
+    assert g.target == 20041.5
+    worst_fill = tr.entry + 0.5
+    assert g.target - worst_fill >= worst_fill - g.stop
     b.on_bar(T0 + pd.Timedelta("1min"), 20006, 20008, 20004, 20007)
     assert b.position() == 5 and b.trades == []
 

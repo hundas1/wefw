@@ -62,6 +62,9 @@ class ExecConfig:
     flatten_time: float = 16.67        # ET hours
     max_entry_dev: float = 0.03        # entry within 3% of the last price
     max_stop_pts: float = 400.0
+    # market entries can fill worse than the engine's price (FX Replay filled 2 ticks off);
+    # widen their targets so reward >= risk still holds for up to this much slippage
+    market_slip_ticks: int = 2
 
     def __post_init__(self):
         bad = set(self.live_books) - set(BRACKET_BOOKS)
@@ -198,7 +201,8 @@ class Executor:
         for t in engine_open:
             key = f"{t.book}:{t.side}:{t.entry_time}"
             if t.book in v.confirm_books and t.entry_time == v.last_bar and pos == 0 and key not in self.state["orders"]:
-                if self._place(key, t.book, t.side, t.qty, None, t.cur_stop, round_out(t.tp1, t.side),
+                pad = 2 * self.cfg.market_slip_ticks * 0.25
+                if self._place(key, t.book, t.side, t.qty, None, t.cur_stop, round_out(t.tp1 + t.side * pad, t.side),
                                v.last_close, out, ref_entry=t.entry):
                     pos = t.side  # treat as filled for the OCA logic below
 
