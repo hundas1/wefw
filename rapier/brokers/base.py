@@ -18,24 +18,24 @@ log = logging.getLogger("rapier.broker")
 TICK = 0.25
 
 
-def prefix_for(key: str, attempt: int = 0) -> str:
+def PrefixFor(key: str, attempt: int = 0) -> str:
     h = hashlib.sha1(key.encode()).hexdigest()[:10]
     return f"rp-{h}" if attempt == 0 else f"rp-{h}-{attempt}"
 
 
-def round_tick(px: float) -> float:
+def RoundTick(px: float) -> float:
     return round(round(px / TICK) * TICK, 2)
 
 
-def round_out(px: float, side: int) -> float:
+def RoundOut(px: float, side: int) -> float:
     """Round a target *away* from the entry (up for longs, down for shorts)."""
     q = px / TICK
     return round((math.ceil(q - 1e-9) if side > 0 else math.floor(q + 1e-9)) * TICK, 2)
 
 
-def tick_bracket(side: int, entry: float, stop: float, r: float) -> tuple[float, float, float]:
+def TickBracket(side: int, entry: float, stop: float, r: float) -> tuple[float, float, float]:
     """Tick-rounded entry/stop/target whose target is still at least ``r`` x the rounded risk."""
-    e, s = round_tick(entry), round_tick(stop)
+    e, s = RoundTick(entry), RoundTick(stop)
     off = math.ceil(r * abs(e - s) / TICK - 1e-9) * TICK
     return e, s, round(e + side * off, 2)
 
@@ -44,16 +44,16 @@ class Broker(Protocol):
     name: str
     units_per_contract: int  # engine sizes in MNQ micros; NQ = 10 micros
 
-    def check(self) -> dict: ...
-    def position(self) -> int: ...
-    def groups(self) -> dict[str, dict]: ...  # prefix -> {"state": "working" | "active"}
-    def place_bracket(self, prefix: str, side: int, qty: int, entry: float | None,
+    def Check(self) -> dict: ...
+    def Position(self) -> int: ...
+    def Groups(self) -> dict[str, dict]: ...  # prefix -> {"state": "working" | "active"}
+    def PlaceBracket(self, prefix: str, side: int, qty: int, entry: float | None,
                       stop: float, target: float) -> None: ...
-    def cancel(self, prefix: str) -> None: ...
-    def flatten(self) -> None: ...
-    def day_pnl(self) -> float | None: ...
+    def Cancel(self, prefix: str) -> None: ...
+    def Flatten(self) -> None: ...
+    def DayPnl(self) -> float | None: ...
     # optional: brokers that can report entry fills and move a working target implement
-    #   fill_price(prefix) -> float | None   and   amend_target(prefix, target) -> bool
+    #   FillPrice(prefix) -> float | None   and   AmendTarget(prefix, target) -> bool
     # so the executor can re-anchor a market entry's target on the real fill price
 
 
@@ -68,33 +68,33 @@ class DryRunBroker:
         self._groups: dict[str, dict] = {}
         self.log: list[tuple] = []
 
-    def check(self) -> dict:
-        return {"dry_run": True} | (self.inner.check() if self.inner else {})
+    def Check(self) -> dict:
+        return {"dry_run": True} | (self.inner.Check() if self.inner else {})
 
-    def position(self) -> int:
-        return self.inner.position() if self.inner else 0
+    def Position(self) -> int:
+        return self.inner.Position() if self.inner else 0
 
-    def groups(self) -> dict[str, dict]:
+    def Groups(self) -> dict[str, dict]:
         return dict(self._groups)
 
-    def place_bracket(self, prefix, side, qty, entry, stop, target):
+    def PlaceBracket(self, prefix, side, qty, entry, stop, target):
         self._groups[prefix] = {"state": "working"}
         self.log.append(("place", prefix, side, qty, entry, stop, target))
         log.info("DRY-RUN would place %s %s x%d entry=%s stop=%s target=%s", prefix,
                  "BUY" if side > 0 else "SELL", qty, entry or "MKT", stop, target)
 
-    def cancel(self, prefix):
+    def Cancel(self, prefix):
         self._groups.pop(prefix, None)
         self.log.append(("cancel", prefix))
         log.info("DRY-RUN would cancel %s", prefix)
 
-    def flatten(self):
+    def Flatten(self):
         self._groups.clear()
         self.log.append(("flatten",))
         log.info("DRY-RUN would flatten")
 
-    def day_pnl(self):
-        return self.inner.day_pnl() if self.inner else None
+    def DayPnl(self):
+        return self.inner.DayPnl() if self.inner else None
 
 
 @dataclass
@@ -131,53 +131,53 @@ class SimBroker:
     _flatten: bool = False
     trades: list = field(default_factory=list)
 
-    def check(self):
+    def Check(self):
         return {"sim": True}
 
-    def position(self):
+    def Position(self):
         return self._pos
 
-    def groups(self):
+    def Groups(self):
         return {p: {"state": g.state} for p, g in self._g.items() if g.state in ("working", "active")}
 
-    def place_bracket(self, prefix, side, qty, entry, stop, target):
+    def PlaceBracket(self, prefix, side, qty, entry, stop, target):
         self._g[prefix] = _G(side, qty, entry, stop, target)
 
-    def cancel(self, prefix):
+    def Cancel(self, prefix):
         g = self._g.get(prefix)
         if g and g.state == "working":
             g.state = "cancelled"
 
-    def fill_price(self, prefix):
+    def FillPrice(self, prefix):
         g = self._g.get(prefix)
         return g.fill if g and g.state == "active" else None
 
-    def amend_target(self, prefix, target):
+    def AmendTarget(self, prefix, target):
         g = self._g.get(prefix)
         if not (g and g.state == "active"):
             return False
         g.target = target
         return True
 
-    def flatten(self):
+    def Flatten(self):
         self._flatten = True
 
-    def day_pnl(self):
+    def DayPnl(self):
         return None
 
-    def _close(self, p, g, px, t, reason):
+    def _Close(self, p, g, px, t, reason):
         pnl = g.side * (px - g.fill) * g.qty * self.point_value - self.commission_rt * g.qty
         self.trades.append(dict(prefix=p, side=g.side, qty=g.qty, entry_time=g.fill_time, entry=g.fill,
                                 exit_time=t, exit=px, pnl=pnl, reason=reason))
         g.state = "done"
         self._pos -= g.side * g.qty
 
-    def on_bar(self, t, o, h, l, c):
+    def OnBar(self, t, o, h, l, c):
         if self._flatten:
             self._flatten = False
             for p, g in self._g.items():
                 if g.state == "active":
-                    self._close(p, g, o - g.side * self.slip, t, "flatten")
+                    self._Close(p, g, o - g.side * self.slip, t, "flatten")
                 elif g.state == "working":
                     g.state = "cancelled"
         for p, g in list(self._g.items()):
@@ -185,9 +185,9 @@ class SimBroker:
                 adverse, favor = (l, h) if g.side > 0 else (h, l)
                 if g.side * (adverse - g.stop) <= 0:
                     gap = g.side * (o - g.stop) < 0
-                    self._close(p, g, (o if gap else g.stop) - g.side * self.slip, t, "stop")
+                    self._Close(p, g, (o if gap else g.stop) - g.side * self.slip, t, "stop")
                 elif g.side * (favor - g.target) >= 0:
-                    self._close(p, g, g.target, t, "target")
+                    self._Close(p, g, g.target, t, "target")
         for p, g in list(self._g.items()):
             if g.state != "working" or (self.oca and self._pos != 0):
                 continue
@@ -205,19 +205,19 @@ class SimBroker:
                         q.state = "cancelled"
             adverse = l if g.side > 0 else h
             if g.side * (adverse - g.stop) <= 0:
-                self._close(p, g, g.stop - g.side * self.slip, t, "stop")
+                self._Close(p, g, g.stop - g.side * self.slip, t, "stop")
             elif g.side * (c - g.target) >= 0 and g.entry is not None:
-                self._close(p, g, g.target, t, "target")
+                self._Close(p, g, g.target, t, "target")
             if self.oca:
                 break
 
 
-def _root_of(symbol: str) -> str:
+def _RootOf(symbol: str) -> str:
     s = symbol.upper().lstrip("/")
     return "MNQ" if s.startswith("MNQ") else "NQ" if s.startswith("NQ") else s
 
 
-def net_position(items: list[dict], instrument_id: str | None, root: str) -> int:
+def NetPosition(items: list[dict], instrument_id: str | None, root: str) -> int:
     """Signed net quantity from a broker positions list (tolerant of field naming).
 
     Rows are matched by instrument id when both sides have one, otherwise by the
@@ -230,7 +230,7 @@ def net_position(items: list[dict], instrument_id: str | None, root: str) -> int
         if instrument_id and pid:
             if pid != instrument_id:
                 continue
-        elif _root_of(sym) != root.upper():
+        elif _RootOf(sym) != root.upper():
             continue
         for k in ("net_quantity", "quantity", "qty"):
             if p.get(k) is not None:

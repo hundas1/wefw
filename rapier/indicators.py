@@ -6,18 +6,18 @@ import numpy as np
 import pandas as pd
 
 
-def atr(df: pd.DataFrame, n: int = 14) -> np.ndarray:
+def Atr(df: pd.DataFrame, n: int = 14) -> np.ndarray:
     h, l, c = df["high"].to_numpy(), df["low"].to_numpy(), df["close"].to_numpy()
     pc = np.r_[c[0], c[:-1]]
     tr = np.maximum(h - l, np.maximum(abs(h - pc), abs(l - pc)))
     return pd.Series(tr).ewm(alpha=1 / n, adjust=False).mean().to_numpy()
 
 
-def ema(x: np.ndarray, n: int) -> np.ndarray:
+def Ema(x: np.ndarray, n: int) -> np.ndarray:
     return pd.Series(x).ewm(span=n, adjust=False).mean().to_numpy()
 
 
-def pivots(high: np.ndarray, low: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+def Pivots(high: np.ndarray, low: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
     """Fractal swing points with ``k`` bars each side.
 
     Returns boolean arrays marking the *pivot bar*. A pivot at ``j`` is only
@@ -36,7 +36,7 @@ def pivots(high: np.ndarray, low: np.ndarray, k: int) -> tuple[np.ndarray, np.nd
     return ph, pl
 
 
-def last_confirmed(flags: np.ndarray, k: int) -> np.ndarray:
+def LastConfirmed(flags: np.ndarray, k: int) -> np.ndarray:
     """For each bar i, index of the latest pivot confirmed by the close of i (or -1)."""
     n = len(flags)
     out = np.full(n, -1)
@@ -49,12 +49,12 @@ def last_confirmed(flags: np.ndarray, k: int) -> np.ndarray:
     return out
 
 
-def structure_trend(df: pd.DataFrame, k: int) -> np.ndarray:
+def StructureTrend(df: pd.DataFrame, k: int) -> np.ndarray:
     """Market-structure bias per bar: +1 after a close above the last confirmed
     swing high (bullish BOS), -1 after a close below the last swing low."""
     h, l, c = df["high"].to_numpy(), df["low"].to_numpy(), df["close"].to_numpy()
-    ph, pl = pivots(h, l, k)
-    lh, ll = last_confirmed(ph, k), last_confirmed(pl, k)
+    ph, pl = Pivots(h, l, k)
+    lh, ll = LastConfirmed(ph, k), LastConfirmed(pl, k)
     out = np.zeros(len(c), int)
     state = 0
     for i in range(len(c)):

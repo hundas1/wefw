@@ -17,7 +17,7 @@ dev = ["pytest>=8"]
 ibkr = ["ib_async>=2.0"]
 
 [project.scripts]
-rapier = "rapier.cli:main"
+rapier = "rapier.cli:Main"
 
 [build-system]
 requires = ["hatchling"]
@@ -29,3 +29,5 @@ packages = ["rapier"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
+# functions use PascalCase (owner preference), so tests are named TestSomething
+python_functions = ["Test*"]

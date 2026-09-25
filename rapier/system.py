@@ -37,12 +37,12 @@ DEFAULT_PARAMS: dict = {
 }
 
 
-def load_params(path: Path | str | None = None) -> dict:
+def LoadParams(path: Path | str | None = None) -> dict:
     p = Path(path) if path else CONFIG_PATH
     return json.loads(p.read_text())["params"] if p.exists() else DEFAULT_PARAMS
 
 
-def build(params: dict, include_scalp: bool | None = None,
+def Build(params: dict, include_scalp: bool | None = None,
           include_teacher: bool | None = None) -> tuple[tuple[BookConfig, ...], RiskConfig]:
     """Turn a params dict into book configs.
 

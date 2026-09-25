@@ -12,7 +12,7 @@ import logging
 import pandas as pd
 
 from .. import data as D
-from .base import round_tick
+from .base import RoundTick
 
 log = logging.getLogger("rapier.ibkr.broker")
 
@@ -27,7 +27,7 @@ class IBKRBroker:
         self._c = None
         self._start = None
 
-    def _conn(self):
+    def _Conn(self):
         if self.ib is None:
             from ib_async import IB
 
@@ -40,94 +40,94 @@ class IBKRBroker:
                 raise RuntimeError(f"IBKR accounts {accts} are not paper accounts; refusing (allow_live=False)")
         return self.ib
 
-    def contract(self):
+    def Contract(self):
         if self._c is None:
             from ib_async import Future
 
-            from ..feeds.ibkr import front_expiry
+            from ..feeds.ibkr import FrontExpiry
 
-            exp = front_expiry(pd.Timestamp.now(tz=D.TZ))
-            self._c = self._conn().qualifyContracts(Future(self.root, exp.strftime("%Y%m"), "CME", currency="USD"))[0]
+            exp = FrontExpiry(pd.Timestamp.now(tz=D.TZ))
+            self._c = self._Conn().qualifyContracts(Future(self.root, exp.strftime("%Y%m"), "CME", currency="USD"))[0]
         return self._c
 
-    def check(self):
-        ib = self._conn()
-        return {"broker": "ibkr", "accounts": ib.managedAccounts(), "contract": self.contract().localSymbol,
-                "position": self.position(), "rapier_open_orders": len(self._trades())}
+    def Check(self):
+        ib = self._Conn()
+        return {"broker": "ibkr", "accounts": ib.managedAccounts(), "contract": self.Contract().localSymbol,
+                "position": self.Position(), "rapier_open_orders": len(self._Trades())}
 
-    def _trades(self):
-        return [t for t in self._conn().openTrades() if str(t.order.orderRef or "").startswith("rp-")]
+    def _Trades(self):
+        return [t for t in self._Conn().openTrades() if str(t.order.orderRef or "").startswith("rp-")]
 
-    def position(self):
-        cid = self.contract().conId
-        return int(sum(p.position for p in self._conn().positions() if p.contract.conId == cid))
+    def Position(self):
+        cid = self.Contract().conId
+        return int(sum(p.position for p in self._Conn().positions() if p.contract.conId == cid))
 
-    def groups(self):
+    def Groups(self):
         out: dict[str, dict] = {}
-        for t in self._trades():
+        for t in self._Trades():
             ref = str(t.order.orderRef)
             g = out.setdefault(ref, {"state": "active"})
             if t.order.parentId == 0 and t.orderStatus.status not in ("Filled",):
                 g["state"] = "working"
         return out
 
-    def place_bracket(self, prefix, side, qty, entry, stop, target):
+    def PlaceBracket(self, prefix, side, qty, entry, stop, target):
         from ib_async import LimitOrder, MarketOrder, StopOrder
 
-        ib = self._conn()
+        ib = self._Conn()
         act, rev = ("BUY", "SELL") if side > 0 else ("SELL", "BUY")
-        parent = MarketOrder(act, qty) if entry is None else LimitOrder(act, qty, round_tick(entry))
+        parent = MarketOrder(act, qty) if entry is None else LimitOrder(act, qty, RoundTick(entry))
         parent.orderId = ib.client.getReqId()
         parent.transmit = False
         parent.tif = "GTC" if entry is not None else "DAY"
         if entry is not None:
             parent.ocaGroup, parent.ocaType = "rapier-entries", 1
-        tp = LimitOrder(rev, qty, round_tick(target), parentId=parent.orderId, transmit=False, tif="GTC")
-        sl = StopOrder(rev, qty, round_tick(stop), parentId=parent.orderId, transmit=True, tif="GTC")
+        tp = LimitOrder(rev, qty, RoundTick(target), parentId=parent.orderId, transmit=False, tif="GTC")
+        sl = StopOrder(rev, qty, RoundTick(stop), parentId=parent.orderId, transmit=True, tif="GTC")
         for o in (parent, tp, sl):
             o.orderRef = prefix
-            ib.placeOrder(self.contract(), o)
+            ib.placeOrder(self.Contract(), o)
 
-    def cancel(self, prefix):
-        for t in self._trades():
+    def Cancel(self, prefix):
+        for t in self._Trades():
             if t.order.orderRef == prefix:
-                self._conn().cancelOrder(t.order)
+                self._Conn().cancelOrder(t.order)
 
-    def _by_ref(self, prefix):
+    def _ByRef(self, prefix):
         # trades() also holds finished orders; a filled parent drops out of openTrades()
-        return [t for t in self._conn().trades() if t.order.orderRef == prefix]
+        return [t for t in self._Conn().trades() if t.order.orderRef == prefix]
 
-    def fill_price(self, prefix):
+    def FillPrice(self, prefix):
         for attempt in range(2):
-            for t in self._by_ref(prefix):
+            for t in self._ByRef(prefix):
                 if t.order.parentId == 0 and t.orderStatus.status == "Filled" and t.orderStatus.avgFillPrice:
                     return float(t.orderStatus.avgFillPrice)
             if attempt == 0:
-                self._conn().sleep(0.5)  # let a just-sent market order's fill arrive
+                self._Conn().sleep(0.5)  # let a just-sent market order's fill arrive
         return None
 
-    def amend_target(self, prefix, target):
-        for t in self._by_ref(prefix):
+    def AmendTarget(self, prefix, target):
+        for t in self._ByRef(prefix):
             if t.order.parentId != 0 and t.order.orderType == "LMT" and not t.isDone():
-                t.order.lmtPrice = round_tick(target)
+                t.order.lmtPrice = RoundTick(target)
                 t.order.transmit = True
-                self._conn().placeOrder(self.contract(), t.order)  # same orderId = modify
+                self._Conn().placeOrder(self.Contract(), t.order)  # same orderId = modify
                 return True
         return False
 
-    def flatten(self):
+    def Flatten(self):
         from ib_async import MarketOrder
 
-        for t in self._trades():
-            self._conn().cancelOrder(t.order)
-        pos = self.position()
+        for t in self._Trades():
+            self._Conn().cancelOrder(t.order)
+        pos = self.Position()
         if pos:
             o = MarketOrder("SELL" if pos > 0 else "BUY", abs(pos))
             o.orderRef = "rp-flat"
-            self._conn().placeOrder(self.contract(), o)
+            self._Conn().placeOrder(self.Contract(), o)
 
-    def day_pnl(self):
-        vals = {v.tag: v.value for v in self._conn().accountSummary() if v.currency in ("USD", "")}
+    def DayPnl(self):
+        vals = {v.tag: v.value for v in self._Conn().accountSummary() if v.currency in ("USD", "")}
         try:
             return float(vals.get("RealizedPnL", 0)) + float(vals.get("UnrealizedPnL", 0))
         except (TypeError, ValueError):

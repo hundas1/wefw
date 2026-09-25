@@ -7,21 +7,21 @@ that only happened in FX Replay, and totals. Writes $FXR_WORK/compare.json.
 import os, json, glob, sys, time, re, datetime as dt
 sys.path.insert(0,os.path.dirname(os.path.abspath(__file__))); import browser as ui
 WORK=os.environ.get("FXR_WORK","fxreplay_work"); os.makedirs(f"{WORK}/sched",exist_ok=True)
-def rows():
-    s=ui.snap()
-    if 'button "Closed positions"' not in s: ui.ab('click','@'+ui.ref('button "Show positions and orders"',s)); time.sleep(1); s=ui.snap()
-    ui.ab('click','@'+ui.ref('button "Closed positions"',s)); time.sleep(1.5)
+def Rows():
+    s=ui.Snap()
+    if 'button "Closed positions"' not in s: ui.Ab('click','@'+ui.Ref('button "Show positions and orders"',s)); time.sleep(1); s=ui.Snap()
+    ui.Ab('click','@'+ui.Ref('button "Closed positions"',s)); time.sleep(1.5)
     out=[]; seen=set()
     for page in range(30):
-        r=ui.js('[...document.querySelectorAll("table tr")].map(r=>[...r.querySelectorAll("td")].map(c=>c.textContent.trim())).filter(r=>r.length>10)')
+        r=ui.Js('[...document.querySelectorAll("table tr")].map(r=>[...r.querySelectorAll("td")].map(c=>c.textContent.trim())).filter(r=>r.length>10)')
         new=[x for x in r if tuple(x) not in seen]
         if not new: break
         for x in new: seen.add(tuple(x)); out.append(x)
-        nxt=ui.js('(()=>{const b=[...document.querySelectorAll("button")].filter(b=>b.querySelector("i,svg")&&b.closest("[class*=paginator]")).pop();if(!b||b.disabled)return false;b.click();return true})()')
+        nxt=ui.Js('(()=>{const b=[...document.querySelectorAll("button")].filter(b=>b.querySelector("i,svg")&&b.closest("[class*=paginator]")).pop();if(!b||b.disabled)return false;b.click();return true})()')
         if not nxt: break
         time.sleep(1.2)
     return out
-fx=rows()
+fx=Rows()
 recs=[]
 for x in fx:
     # ['', asset, side, start, end, entry, sl, tp, rr, size, close, realized, commission, journal]

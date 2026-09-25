@@ -4,12 +4,12 @@ import pandas as pd
 import pytest
 
 from rapier import data as D
-from rapier.backtest import BookConfig, Market, RiskConfig, run
-from rapier.indicators import structure_trend
-from rapier.strategy import SetupParams, find_setups
+from rapier.backtest import BookConfig, Market, RiskConfig, Run
+from rapier.indicators import StructureTrend
+from rapier.strategy import SetupParams, FindSetups
 
 
-def synth(n=3000, seed=1, start="2025-01-06 18:00"):
+def Synth(n=3000, seed=1, start="2025-01-06 18:00"):
     rng = np.random.default_rng(seed)
     idx = pd.date_range(start, periods=n * 2, freq="1h", tz=D.TZ)
     idx = idx[(idx.hour != 17) & ~((idx.dayofweek == 5) | ((idx.dayofweek == 4) & (idx.hour > 17))
@@ -23,31 +23,31 @@ def synth(n=3000, seed=1, start="2025-01-06 18:00"):
                          "volume": 1000.0}, index=idx)
 
 
-def test_setups_have_no_lookahead():
-    df = synth()
+def TestSetupsHaveNoLookahead():
+    df = Synth()
     p = SetupParams(k=3)
-    full = find_setups(df, pd.Timedelta("1h"), p)
+    full = FindSetups(df, pd.Timedelta("1h"), p)
     cut = 2000
-    part = find_setups(df.iloc[:cut], pd.Timedelta("1h"), p)
+    part = FindSetups(df.iloc[:cut], pd.Timedelta("1h"), p)
     for side in ("long", "short"):
         a = getattr(full, side)["E"][:cut]
         b = getattr(part, side)["E"]
         assert np.allclose(a, b, equal_nan=True), side
 
 
-def test_structure_trend_has_no_lookahead():
-    df = synth(seed=3)
-    full = structure_trend(df, 3)
-    part = structure_trend(df.iloc[:1500], 3)
+def TestStructureTrendHasNoLookahead():
+    df = Synth(seed=3)
+    full = StructureTrend(df, 3)
+    part = StructureTrend(df.iloc[:1500], 3)
     assert (full[:1500] == part).all()
 
 
-def test_every_trade_planned_at_least_1r():
+def TestEveryTradePlannedAtLeast1r():
     with pytest.raises(ValueError):
         BookConfig("x", "1h", tp1_r=0.8)
-    df = synth(seed=5)
-    m = Market.from_1h(df)
-    res = run(m, (BookConfig("ote-1h", "1h", SetupParams(k=2, min_leg_atr=1.0), bias_tfs=()),),
+    df = Synth(seed=5)
+    m = Market.From1h(df)
+    res = Run(m, (BookConfig("ote-1h", "1h", SetupParams(k=2, min_leg_atr=1.0), bias_tfs=()),),
               RiskConfig(flatten_eod=False, daily_loss_limit=1e9, dd_throttle=None))
     assert len(res.trades) > 10
     assert (res.trades.planned_rr >= 1.0).all()
@@ -55,11 +55,11 @@ def test_every_trade_planned_at_least_1r():
     assert res.trades.r.min() > -1.2
 
 
-def test_stop_wins_when_bar_hits_both():
+def TestStopWinsWhenBarHitsBoth():
     # one long setup then a single huge bar that spans both stop and target
-    df = synth(n=400, seed=7)
-    m = Market.from_1h(df)
-    res = run(m, (BookConfig("ote-1h", "1h", SetupParams(k=2, min_leg_atr=1.0), bias_tfs=()),),
+    df = Synth(n=400, seed=7)
+    m = Market.From1h(df)
+    res = Run(m, (BookConfig("ote-1h", "1h", SetupParams(k=2, min_leg_atr=1.0), bias_tfs=()),),
               RiskConfig(flatten_eod=False, daily_loss_limit=1e9, dd_throttle=None))
     t = res.trades
     both = t[(t.mfe_pts >= t.risk_pts) & (t.mae_pts >= t.risk_pts)]
@@ -68,25 +68,25 @@ def test_stop_wins_when_bar_hits_both():
         assert row.exit_reason in ("stop", "tp1", "tp1+stop", "eod", "end")
 
 
-def test_resample_4h_is_session_aligned():
-    df = synth(n=200)
-    h4 = D.resample(df, "4h")
+def TestResample4hIsSessionAligned():
+    df = Synth(n=200)
+    h4 = D.Resample(df, "4h")
     assert set(h4.index.hour) <= {2, 6, 10, 14, 18, 22}
-    d1 = D.resample(df, "1D")
+    d1 = D.Resample(df, "1D")
     assert (d1.index.hour == 17).all()
 
 
-def test_market_normalizes_timestamp_units():
-    df = synth(n=300)
+def TestMarketNormalizesTimestampUnits():
+    df = Synth(n=300)
     us = df.copy()
     us.index = us.index.as_unit("us")
-    m = Market.from_1h(us)
+    m = Market.From1h(us)
     assert all(f.index.unit == "ns" for f in m.frames.values())
     assert m.base.index.unit == "ns"
 
 
-def test_roll_adjust_removes_sunday_gap():
-    df = synth(n=600, start="2025-09-01 18:00")
+def TestRollAdjustRemovesSundayGap():
+    df = Synth(n=600, start="2025-09-01 18:00")
     sw = df.index[(df.index.date == pd.Timestamp("2025-09-14").date()) & (df.index.hour == 18)][0]
     jumped = df.copy()
     # a weekend-hidden switch is adjusted by theoretical carry (0.95% of price),
@@ -94,22 +94,22 @@ def test_roll_adjust_removes_sunday_gap():
     lo, hi = pd.Timestamp("2025-09-14 12:00", tz=D.TZ), pd.Timestamp("2025-09-19", tz=D.TZ)
     spread = round(0.0095 * df.close.loc[lo:hi].median() * 4) / 4
     jumped.loc[jumped.index >= sw, ["open", "high", "low", "close"]] += spread
-    adj, rolls = D.roll_adjust(jumped)
+    adj, rolls = D.RollAdjust(jumped)
     assert len(rolls) == 1 and rolls[0].switch == sw and rolls[0].method == "sunday-open"
     orig_gap = df.open[sw] - df.close.shift()[sw]
     new_gap = adj.open[sw] - adj.close.shift()[sw]
     assert abs(new_gap - orig_gap) < 5
 
 
-def test_roll_adjust_drops_flip_flop_bars():
-    df = synth(n=600, start="2025-09-01 18:00")
+def TestRollAdjustDropsFlipFlopBars():
+    df = Synth(n=600, start="2025-09-01 18:00")
     t0 = pd.Timestamp("2025-09-16 03:00", tz=D.TZ)
     j = df.copy()
     new = j.index >= t0 + pd.Timedelta("3h")
     j.loc[new, ["open", "high", "low", "close"]] += 190
     # two contaminated bars alternating contracts before the final switch
     j.loc[t0, ["open", "close"]] += 190
-    adj, rolls = D.roll_adjust(j)
+    adj, rolls = D.RollAdjust(j)
     r = rolls[0]
     assert r.method == "flip" and r.switch == t0 + pd.Timedelta("3h")
     assert t0 not in adj.index

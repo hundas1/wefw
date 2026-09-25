@@ -30,7 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import data as D
-from .brokers.base import Broker, prefix_for, round_out, round_tick
+from .brokers.base import Broker, PrefixFor, RoundOut, RoundTick
 
 log = logging.getLogger("rapier.exec")
 
@@ -72,7 +72,7 @@ class ExecConfig:
             raise ValueError(f"books {sorted(bad)} need order modification and cannot run live yet")
 
 
-def market_open(t: pd.Timestamp) -> bool:
+def MarketOpen(t: pd.Timestamp) -> bool:
     t = t.tz_convert(D.TZ)
     h = t.hour + t.minute / 60
     if t.dayofweek == 5 or (t.dayofweek == 4 and h >= 17) or (t.dayofweek == 6 and h < 18):
@@ -91,12 +91,12 @@ class Executor:
         if self.state_path and Path(self.state_path).exists():
             self.state = json.loads(Path(self.state_path).read_text())
 
-    def _save(self):
+    def _Save(self):
         if self.state_path:
             Path(self.state_path).parent.mkdir(parents=True, exist_ok=True)
             Path(self.state_path).write_text(json.dumps(self.state, default=str, indent=1))
 
-    def _note(self, msg: str, out: list, once_key: str | None = None) -> None:
+    def _Note(self, msg: str, out: list, once_key: str | None = None) -> None:
         if once_key:
             if once_key in self.state["noted"]:
                 return
@@ -105,10 +105,10 @@ class Executor:
         log.info(msg)
 
     # ---------------------------------------------------------------- helpers
-    def _qty(self, mnq: int) -> int:
+    def _Qty(self, mnq: int) -> int:
         return min(self.cfg.max_qty, int(mnq) // self.broker.units_per_contract)
 
-    def _sane(self, side: int, entry: float, stop: float, target: float, last: float) -> str | None:
+    def _Sane(self, side: int, entry: float, stop: float, target: float, last: float) -> str | None:
         if abs(entry - last) > self.cfg.max_entry_dev * last:
             return f"entry {entry} too far from last price {last}"
         if side * (entry - stop) <= 0 or side * (target - entry) <= 0:
@@ -119,40 +119,40 @@ class Executor:
             return "target below 1R"
         return None
 
-    def _place(self, key: str, book: str, side: int, mnq: int, entry, stop, target, last, out,
+    def _Place(self, key: str, book: str, side: int, mnq: int, entry, stop, target, last, out,
                ref_entry: float | None = None, r_mult: float | None = None) -> bool:
         """``entry=None`` sends a market entry; ``ref_entry`` is the engine's price for it and
         ``r_mult`` its planned reward:risk, re-applied to the real fill where the broker allows."""
-        qty = self._qty(mnq)
+        qty = self._Qty(mnq)
         if qty < 1:
-            self._note(f"skip {key}: size {mnq} MNQ is below one {self.broker.name} contract", out, f"small:{key}")
+            self._Note(f"skip {key}: size {mnq} MNQ is below one {self.broker.name} contract", out, f"small:{key}")
             return False
-        why = self._sane(side, entry if entry is not None else (ref_entry or last), stop, target, last)
+        why = self._Sane(side, entry if entry is not None else (ref_entry or last), stop, target, last)
         if why:
-            self._note(f"REFUSED {key}: {why}", out, f"refused:{key}")
+            self._Note(f"REFUSED {key}: {why}", out, f"refused:{key}")
             return False
         rec = self.state["orders"].get(key, {"attempt": -1})
-        prefix = prefix_for(key, rec["attempt"] + 1)
-        self.broker.place_bracket(prefix, side, qty, None if entry is None else round_tick(entry),
-                                  round_tick(stop), round_tick(target))
+        prefix = PrefixFor(key, rec["attempt"] + 1)
+        self.broker.PlaceBracket(prefix, side, qty, None if entry is None else RoundTick(entry),
+                                  RoundTick(stop), RoundTick(target))
         self.state["orders"][key] = {"attempt": rec["attempt"] + 1, "prefix": prefix, "book": book,
                                      "status": "sent", "side": side, "qty": qty,
-                                     "levels": [None if entry is None else round_tick(entry),
-                                                round_tick(stop), round_tick(target)],
+                                     "levels": [None if entry is None else RoundTick(entry),
+                                                RoundTick(stop), RoundTick(target)],
                                      "r_mult": r_mult}
-        self._note(f"PLACE {book} {'BUY' if side > 0 else 'SELL'} x{qty} "
-                   f"entry={'MKT' if entry is None else round_tick(entry)} stop={round_tick(stop)} "
-                   f"target={round_tick(target)} [{prefix}]", out)
+        self._Note(f"PLACE {book} {'BUY' if side > 0 else 'SELL'} x{qty} "
+                   f"entry={'MKT' if entry is None else RoundTick(entry)} stop={RoundTick(stop)} "
+                   f"target={RoundTick(target)} [{prefix}]", out)
         return True
 
-    def _reanchor_targets(self, out: list) -> None:
+    def _ReanchorTargets(self, out: list) -> None:
         """Market entries fill away from the engine's price (FX Replay: -8..+17 ticks), so move
         each filled market bracket's target to the planned R measured from the actual fill."""
-        fill_price = getattr(self.broker, "fill_price", None)
-        amend = getattr(self.broker, "amend_target", None)
+        fill_price = getattr(self.broker, "FillPrice", None)
+        amend = getattr(self.broker, "AmendTarget", None)
         if not (fill_price and amend):
             return  # e.g. Tradara: no documented amend; the static slippage pad stays
-        active = {p for p, g in self.broker.groups().items() if g["state"] == "active"}
+        active = {p for p, g in self.broker.Groups().items() if g["state"] == "active"}
         for rec in self.state["orders"].values():
             p = rec.get("prefix")
             if rec.get("r_mult") is None or rec.get("reanchored") or p not in active:
@@ -164,47 +164,47 @@ class Executor:
             side, stop, old = rec["side"], rec["levels"][1], rec["levels"][2]
             if side * (fill - stop) <= 0:
                 continue  # filled through the stop; the stop order handles it
-            new = round_out(fill + side * rec["r_mult"] * abs(fill - stop), side)
+            new = RoundOut(fill + side * rec["r_mult"] * abs(fill - stop), side)
             if new != old and amend(p, new):
                 rec["levels"][2] = new
-                self._note(f"AMEND {p}: filled {fill}, target {old} -> {new} "
+                self._Note(f"AMEND {p}: filled {fill}, target {old} -> {new} "
                            f"({rec['r_mult']:.2f}R from the actual fill)", out)
 
-    def _kill(self, reason: str, day: str, out: list) -> None:
-        self.broker.flatten()
+    def _Kill(self, reason: str, day: str, out: list) -> None:
+        self.broker.Flatten()
         self.state["killed_day"] = day
-        self._note(f"KILL SWITCH: {reason}. Cancelled Rapier orders, flattened, off until next trading day.", out)
+        self._Note(f"KILL SWITCH: {reason}. Cancelled Rapier orders, flattened, off until next trading day.", out)
 
     # ------------------------------------------------------------------- step
-    def step(self, v: View, wall: pd.Timestamp | None = None) -> list[str]:
+    def Step(self, v: View, wall: pd.Timestamp | None = None) -> list[str]:
         out: list[str] = []
         wall = wall or pd.Timestamp.now(tz=D.TZ)
-        day = str(D.trading_day(pd.DatetimeIndex([v.now]))[0].date())
+        day = str(D.TradingDay(pd.DatetimeIndex([v.now]))[0].date())
         live = set(self.cfg.live_books)
 
         if self.state.get("killed_day") == day:
             return out
-        if not market_open(wall):
+        if not MarketOpen(wall):
             return out
 
-        pos = self.broker.position()
-        groups = self.broker.groups()
+        pos = self.broker.Position()
+        groups = self.broker.Groups()
         hour = wall.tz_convert(D.TZ).hour + wall.tz_convert(D.TZ).minute / 60
 
         # stale data: pull resting entries, never trade blind
         if wall - v.now > self.cfg.stale_after:
             for p, g in groups.items():
                 if g["state"] == "working":
-                    self.broker.cancel(p)
-            self._note(f"STALE DATA: last bar ended {v.now}; working entries cancelled", out, f"stale:{v.now}")
-            self._save()
+                    self.broker.Cancel(p)
+            self._Note(f"STALE DATA: last bar ended {v.now}; working entries cancelled", out, f"stale:{v.now}")
+            self._Save()
             return out
 
-        pnl = self.broker.day_pnl()
+        pnl = self.broker.DayPnl()
         pnl = v.engine_day_pnl if pnl is None else pnl
         if pnl <= -self.cfg.daily_loss_limit:
-            self._kill(f"day P&L {pnl:.0f} <= -{self.cfg.daily_loss_limit:.0f}", day, out)
-            self._save()
+            self._Kill(f"day P&L {pnl:.0f} <= -{self.cfg.daily_loss_limit:.0f}", day, out)
+            self._Save()
             return out
 
         # end of day / book flat times the broker brackets don't know about
@@ -213,15 +213,15 @@ class Executor:
         book_due = any(v.book_flat.get(t.book) is not None and v.book_flat[t.book] <= hour < 18
                        for t in engine_open)
         if pos and (after_flat or book_due or any(e["book"] in live for e in v.forced_exits)):
-            self.broker.flatten()
-            self._note(f"FLATTEN position {pos} ({'end of day' if after_flat else 'book flat time'})", out)
-            self._save()
+            self.broker.Flatten()
+            self._Note(f"FLATTEN position {pos} ({'end of day' if after_flat else 'book flat time'})", out)
+            self._Save()
             return out
         if after_flat:
             for p, g in groups.items():
                 if g["state"] == "working":
-                    self.broker.cancel(p)
-            self._save()
+                    self.broker.Cancel(p)
+            self._Save()
             return out
 
         # confirmation books: the engine entered at this bar's close -> market bracket now
@@ -230,27 +230,27 @@ class Executor:
             if t.book in v.confirm_books and t.entry_time == v.last_bar and pos == 0 and key not in self.state["orders"]:
                 pad = 2 * self.cfg.market_slip_ticks * 0.25
                 r_mult = t.side * (t.tp1 - t.entry) / abs(t.entry - t.cur_stop)
-                if self._place(key, t.book, t.side, t.qty, None, t.cur_stop, round_out(t.tp1 + t.side * pad, t.side),
+                if self._Place(key, t.book, t.side, t.qty, None, t.cur_stop, RoundOut(t.tp1 + t.side * pad, t.side),
                                v.last_close, out, ref_entry=t.entry, r_mult=r_mult):
                     pos = t.side  # treat as filled for the OCA logic below
-                    self._reanchor_targets(out)
+                    self._ReanchorTargets(out)
 
         # one position at a time: a live position cancels every other working entry
         if pos:
-            self._reanchor_targets(out)
+            self._ReanchorTargets(out)
             for p, g in groups.items():
                 if g["state"] == "working":
-                    self.broker.cancel(p)
-                    self._note(f"CANCEL {p}: position open (one-at-a-time)", out)
+                    self.broker.Cancel(p)
+                    self._Note(f"CANCEL {p}: position open (one-at-a-time)", out)
             for t in engine_open:
-                self._note(f"in position {pos}: {t.book} {'LONG' if t.side > 0 else 'SHORT'} "
-                           f"stop {round_tick(t.cur_stop)} target {round_tick(t.tp1)}", out,
+                self._Note(f"in position {pos}: {t.book} {'LONG' if t.side > 0 else 'SHORT'} "
+                           f"stop {RoundTick(t.cur_stop)} target {RoundTick(t.tp1)}", out,
                            f"inpos:{t.book}:{t.entry_time}")
-            self._save()
+            self._Save()
             return out
 
         for t in engine_open:
-            self._note(f"engine is in a {t.book} trade the broker did not fill (touch without fill "
+            self._Note(f"engine is in a {t.book} trade the broker did not fill (touch without fill "
                        f"or order not resting yet); not chasing", out, f"missed:{t.book}:{t.entry_time}")
 
         # resting limits = engine's armed list for live limit books
@@ -260,30 +260,30 @@ class Executor:
         for p, g in groups.items():
             k = by_prefix.get(p)
             if g["state"] == "working" and (k is None or k not in desired):
-                self.broker.cancel(p)
+                self.broker.Cancel(p)
                 if k:
                     self.state["orders"][k]["status"] = "cancelled"
-                self._note(f"CANCEL {p} ({k or 'unknown order'}): no longer armed", out)
+                self._Note(f"CANCEL {p} ({k or 'unknown order'}): no longer armed", out)
         for k, o in desired.items():
             rec = self.state["orders"].get(k)
-            if rec and rec.get("prefix") in groups and _moved(rec.get("levels"), o):
+            if rec and rec.get("prefix") in groups and _Moved(rec.get("levels"), o):
                 # the OTE level of a signal moves while its leg develops; the backtest
                 # always uses the current level, so re-price the resting order
-                self.broker.cancel(rec["prefix"])
+                self.broker.Cancel(rec["prefix"])
                 rec["status"] = "cancelled"
-                self._note(f"REPRICE {k}: {rec.get('levels')} -> {[o['entry'], o['stop'], o['tp1']]}", out)
+                self._Note(f"REPRICE {k}: {rec.get('levels')} -> {[o['entry'], o['stop'], o['tp1']]}", out)
                 groups = {p: g for p, g in groups.items() if p != rec["prefix"]}
             if rec and (rec.get("prefix") in groups or rec.get("status") != "cancelled"):
                 # resting already, or it vanished without us cancelling it (filled / rejected):
                 # never re-send the same signal
                 continue
             side = 1 if o["side"] == "LONG" else -1
-            self._place(k, o["book"], side, o["mnq"], o["entry"], o["stop"], o["tp1"], v.last_close, out)
-        self._save()
+            self._Place(k, o["book"], side, o["mnq"], o["entry"], o["stop"], o["tp1"], v.last_close, out)
+        self._Save()
         return out
 
 
-def _moved(levels, o: dict) -> bool:
+def _Moved(levels, o: dict) -> bool:
     """Entry moved by a tick, or stop/target by 2+ ticks (ignore 1-tick ATR jitter)."""
     if not levels:
         return False

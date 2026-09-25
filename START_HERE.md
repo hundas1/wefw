@@ -99,7 +99,8 @@ and `1m` adds the 1-minute "teacher" book.
 4. **Sizes are in micros (MNQ).** 10 MNQ = 1 NQ. `RAPIER_ROOT=NQ` divides by 10.
 5. **"Book"** means one strategy on one timeframe: `swing-4h`, `ote-1h`, `scalp-5m`, `teacher-1m`.
    `teacher-1m` is the owner's own hand-written 1-minute rules from the old bot.
-6. **Live trading is off by default** (dry run). Real orders need BOTH `--arm` AND
+6. **Naming:** functions are PascalCase (`LoadNq`, `PlaceBracket`) by the owner's choice; variables and files stay snake_case. See `AGENTS.md`.
+7. **Live trading is off by default** (dry run). Real orders need BOTH `--arm` AND
    `RAPIER_I_UNDERSTAND_REAL_ORDERS=yes`, and it refuses on delayed (Yahoo) data.
 
 ## 6. What to do next (in priority order)
@@ -110,7 +111,7 @@ and `1m` adds the 1-minute "teacher" book.
 2. **Live rehearsal**, owner's machine only: `rapier broker-check`, then several dry-run sessions,
    then an IBKR paper account with `--arm`, then Tradara with small size.
 3. **Tradara: target fix after a fill.** The code can't change an order on Tradara (no documented endpoint),
-   so it uses a fixed 2-tick pad. If Tradara has a modify call, add `fill_price()` and `amend_target()` to
+   so it uses a fixed 2-tick pad. If Tradara has a modify call, add `FillPrice()` and `AmendTarget()` to
    `rapier/brokers/tradara.py`. Copy the IBKR versions; the executor picks them up automatically.
 4. **Check with the prop firm** that API/automated trading is allowed, and with IBKR that the data
    subscription allows automated ("non-display") use.

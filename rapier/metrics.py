@@ -15,7 +15,7 @@ GOALS = {
 }
 
 
-def summarize(res: Result) -> dict:
+def Summarize(res: Result) -> dict:
     t = res.trades
     eq = res.equity
     out: dict = {"trades": int(len(t))}
@@ -46,13 +46,13 @@ def summarize(res: Result) -> dict:
         max_dd_closed_usd=dd_closed,
         worst_day_usd=float(days.min()),
         best_day_usd=float(days.max()),
-        max_consec_losses=int(_max_run(~wins.to_numpy())),
+        max_consec_losses=int(_MaxRun(~wins.to_numpy())),
         tp1_hit_rate=float(t.tp1_hit.mean()),
     )
     return out
 
 
-def goal_check(s: dict) -> dict[str, bool]:
+def GoalCheck(s: dict) -> dict[str, bool]:
     return {
         "every trade planned >= 1R": s.get("min_planned_rr", 0) >= GOALS["min_planned_rr"],
         "single trade >= $11,000": s.get("best_trade_usd", 0) >= GOALS["best_trade_usd"],
@@ -61,7 +61,7 @@ def goal_check(s: dict) -> dict[str, bool]:
     }
 
 
-def by_book(res: Result) -> pd.DataFrame:
+def ByBook(res: Result) -> pd.DataFrame:
     t = res.trades
     if t.empty:
         return pd.DataFrame()
@@ -75,14 +75,14 @@ def by_book(res: Result) -> pd.DataFrame:
     })
 
 
-def monthly(res: Result) -> pd.Series:
+def Monthly(res: Result) -> pd.Series:
     t = res.trades
     if t.empty:
         return pd.Series(dtype=float)
     return t.groupby(pd.to_datetime(t.exit_time).dt.strftime("%Y-%m")).pnl.sum()
 
 
-def _max_run(x: np.ndarray) -> int:
+def _MaxRun(x: np.ndarray) -> int:
     best = cur = 0
     for v in x:
         cur = cur + 1 if v else 0

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .indicators import atr, last_confirmed, pivots
+from .indicators import Atr, LastConfirmed, Pivots
 
 
 @dataclass(frozen=True)
@@ -53,20 +53,20 @@ class Setups:
     pivot_high_price: np.ndarray
 
 
-def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Setups:
+def FindSetups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Setups:
     if p.mode == "impulse":
-        return _find_impulse_setups(df, tf_delta, p)
+        return _FindImpulseSetups(df, tf_delta, p)
     h, l = df["high"].to_numpy(), df["low"].to_numpy()
     n = len(h)
-    a = atr(df)
-    ph, pl = pivots(h, l, p.k)
-    lh, ll = last_confirmed(ph, p.k), last_confirmed(pl, p.k)
+    a = Atr(df)
+    ph, pl = Pivots(h, l, p.k)
+    lh, ll = LastConfirmed(ph, p.k), LastConfirmed(pl, p.k)
 
     # previous confirmed pivot high strictly before a given bar index
     ph_idx = np.flatnonzero(ph)
     pl_idx = np.flatnonzero(pl)
 
-    def prev_pivot(idx_arr: np.ndarray, j: int) -> int:
+    def PrevPivot(idx_arr: np.ndarray, j: int) -> int:
         pos = np.searchsorted(idx_arr, j) - 1
         return int(idx_arr[pos]) if pos >= 0 else -1
 
@@ -84,9 +84,9 @@ def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Set
             D = H - A
             ok = D >= p.min_leg_atr * a[i] and D <= p.max_leg_atr * a[i]
             if ok:
-                ok = _shape_ok(p, D, hi_rel, h, l, j)
+                ok = _ShapeOk(p, D, hi_rel, h, l, j)
             if ok and p.require_bos:
-                b = prev_pivot(ph_idx, j)
+                b = PrevPivot(ph_idx, j)
                 ok = b >= 0 and H > h[b]
             if ok and l[j + hi_rel:i + 1].min() >= A:
                 L["E"][i] = H - p.fib * D
@@ -102,9 +102,9 @@ def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Set
             D = A - Lo
             ok = D >= p.min_leg_atr * a[i] and D <= p.max_leg_atr * a[i]
             if ok:
-                ok = _shape_ok(p, D, lo_rel, h, l, j)
+                ok = _ShapeOk(p, D, lo_rel, h, l, j)
             if ok and p.require_bos:
-                b = prev_pivot(pl_idx, j)
+                b = PrevPivot(pl_idx, j)
                 ok = b >= 0 and Lo < l[b]
             if ok and h[j + lo_rel:i + 1].max() <= A:
                 Sh["E"][i] = Lo + p.fib * D
@@ -118,7 +118,7 @@ def find_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Set
     return Setups(df.index, close_time, a, L, Sh, plp, php)
 
 
-def _shape_ok(p: SetupParams, D: float, rel: int, h: np.ndarray, l: np.ndarray, j: int) -> bool:
+def _ShapeOk(p: SetupParams, D: float, rel: int, h: np.ndarray, l: np.ndarray, j: int) -> bool:
     if D < p.min_leg_pts or not (p.min_leg_bars <= rel <= p.max_leg_bars):
         return False
     if p.max_bar_frac < 1.0 and D > 0:
@@ -128,12 +128,12 @@ def _shape_ok(p: SetupParams, D: float, rel: int, h: np.ndarray, l: np.ndarray, 
     return True
 
 
-def _find_impulse_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Setups:
+def _FindImpulseSetups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParams) -> Setups:
     h, l = df["high"].to_numpy(), df["low"].to_numpy()
     n = len(h)
-    a = atr(df)
-    ph, pl = pivots(h, l, p.k)
-    lh, ll = last_confirmed(ph, p.k), last_confirmed(pl, p.k)
+    a = Atr(df)
+    ph, pl = Pivots(h, l, p.k)
+    lh, ll = LastConfirmed(ph, p.k), LastConfirmed(pl, p.k)
     W = int(min(p.max_leg_bars, 10**6))
     fields = ("E", "S", "A", "H", "D", "id", "x")
     L = {f: np.full(n, np.nan) for f in fields}
@@ -145,7 +145,7 @@ def _find_impulse_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParam
             o = lo0 + int(l[lo0:x].argmin())
             A, H = l[o], h[x]
             D = H - A
-            if (p.min_leg_atr * a[i] <= D <= p.max_leg_atr * a[i] and _shape_ok(p, D, x - o, h, l, o)
+            if (p.min_leg_atr * a[i] <= D <= p.max_leg_atr * a[i] and _ShapeOk(p, D, x - o, h, l, o)
                     and l[x:i + 1].min() >= A):
                 L["E"][i], L["S"][i] = H - p.fib * D, A - p.stop_buf_atr * a[i]
                 L["A"][i], L["H"][i], L["D"][i], L["id"][i], L["x"][i] = A, H, D, o, x
@@ -155,7 +155,7 @@ def _find_impulse_setups(df: pd.DataFrame, tf_delta: pd.Timedelta, p: SetupParam
             o = lo0 + int(h[lo0:x].argmax())
             A, Lo = h[o], l[x]
             D = A - Lo
-            if (p.min_leg_atr * a[i] <= D <= p.max_leg_atr * a[i] and _shape_ok(p, D, x - o, h, l, o)
+            if (p.min_leg_atr * a[i] <= D <= p.max_leg_atr * a[i] and _ShapeOk(p, D, x - o, h, l, o)
                     and h[x:i + 1].max() <= A):
                 Sh["E"][i], Sh["S"][i] = Lo + p.fib * D, A + p.stop_buf_atr * a[i]
                 Sh["A"][i], Sh["H"][i], Sh["D"][i], Sh["id"][i], Sh["x"][i] = A, Lo, D, o, x

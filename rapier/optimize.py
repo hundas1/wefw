@@ -17,9 +17,9 @@ from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
 
 from . import data as D
-from .backtest import Market, run
-from .metrics import GOALS, summarize
-from .system import CONFIG_PATH, DEFAULT_PARAMS, build
+from .backtest import Market, Run
+from .metrics import GOALS, Summarize
+from .system import CONFIG_PATH, DEFAULT_PARAMS, Build
 
 IS_START, OOS_START, OOS_END = "2025-07-26", "2024-06-15", "2025-07-25"
 
@@ -41,13 +41,13 @@ SPACE = {
 _MKT: Market | None = None
 
 
-def _init():
+def _Init():
     global _MKT
-    h1, _ = D.roll_adjust(D.fetch("1h", refresh=False))
-    _MKT = Market.from_1h(h1)
+    h1, _ = D.RollAdjust(D.Fetch("1h", refresh=False))
+    _MKT = Market.From1h(h1)
 
 
-def sample(rng: random.Random) -> dict:
+def Sample(rng: random.Random) -> dict:
     p = copy.deepcopy(DEFAULT_PARAMS)
     for book, space in SPACE.items():
         for k, choices in space.items():
@@ -57,16 +57,16 @@ def sample(rng: random.Random) -> dict:
     return p
 
 
-def evaluate(params: dict) -> dict:
-    books, risk = build(params, include_scalp=False)
+def Evaluate(params: dict) -> dict:
+    books, risk = Build(params, include_scalp=False)
     out = {"params": params}
     for tag, (a, b) in {"is": (IS_START, None), "oos": (OOS_START, OOS_END)}.items():
-        out[tag] = summarize(run(_MKT, books, risk, start=a, end=b))
-    out["score"] = score(out["is"], out["oos"])
+        out[tag] = Summarize(Run(_MKT, books, risk, start=a, end=b))
+    out["score"] = Score(out["is"], out["oos"])
     return out
 
 
-def score(i: dict, o: dict, min_trades: int = 20) -> float:
+def Score(i: dict, o: dict, min_trades: int = 20) -> float:
     if min(i.get("trades", 0), o.get("trades", 0)) < min_trades:
         return -9.0
     dd = max(i["max_dd_usd"], o["max_dd_usd"])
@@ -80,16 +80,16 @@ def score(i: dict, o: dict, min_trades: int = 20) -> float:
     return s
 
 
-def search(n: int = 400, seed: int = 7, workers: int | None = None) -> list[dict]:
+def Search(n: int = 400, seed: int = 7, workers: int | None = None) -> list[dict]:
     rng = random.Random(seed)
-    cands = [DEFAULT_PARAMS] + [sample(rng) for _ in range(n - 1)]
+    cands = [DEFAULT_PARAMS] + [Sample(rng) for _ in range(n - 1)]
     workers = workers or max(1, (os.cpu_count() or 2) - 0)
-    with ProcessPoolExecutor(workers, initializer=_init) as ex:
-        results = list(ex.map(evaluate, cands, chunksize=4))
+    with ProcessPoolExecutor(workers, initializer=_Init) as ex:
+        results = list(ex.map(Evaluate, cands, chunksize=4))
     return sorted(results, key=lambda r: r["score"], reverse=True)
 
 
-def refine(best: dict, n: int = 200, seed: int = 11, workers: int | None = None) -> list[dict]:
+def Refine(best: dict, n: int = 200, seed: int = 11, workers: int | None = None) -> list[dict]:
     """Local search: mutate one or two knobs of the incumbent at a time."""
     rng = random.Random(seed)
     cands = []
@@ -101,17 +101,17 @@ def refine(best: dict, n: int = 200, seed: int = 11, workers: int | None = None)
             p[book][k] = rng.choice(SPACE[book][k])
         cands.append(p)
     workers = workers or max(1, os.cpu_count() or 2)
-    with ProcessPoolExecutor(workers, initializer=_init) as ex:
-        results = list(ex.map(evaluate, cands, chunksize=4))
+    with ProcessPoolExecutor(workers, initializer=_Init) as ex:
+        results = list(ex.map(Evaluate, cands, chunksize=4))
     return sorted(results + [best], key=lambda r: r["score"], reverse=True)
 
 
-def save(best: dict, path=CONFIG_PATH) -> None:
+def Save(best: dict, path=CONFIG_PATH) -> None:
     path.write_text(json.dumps({"params": best["params"], "is": best["is"], "oos": best["oos"],
                                 "score": best["score"]}, indent=2, default=float))
 
 
-def table(results: list[dict], top: int = 15) -> pd.DataFrame:
+def Table(results: list[dict], top: int = 15) -> pd.DataFrame:
     rows = []
     for r in results[:top]:
         rows.append({"score": r["score"], **{f"is_{k}": r["is"].get(k) for k in

@@ -271,7 +271,7 @@ rapier/backtest.py    event-driven multi-book engine, prop risk rules, conservat
 rapier/metrics.py     stats + goal checks
 rapier/optimize.py    random + local search, ranked on the worse of IS/OOS
 rapier/system.py      params -> books
-rapier/live.py        signal loop + engine_view (the engine's desired state for the executor)
+rapier/live.py        signal loop + EngineView (the engine's desired state for the executor)
 rapier/executor.py    mirrors the engine onto a broker; all safety rails
 rapier/trader.py      live loop: IBKR bars -> engine -> executor -> broker
 rapier/replay.py      bar-by-bar replay of the live stack against a simulated broker

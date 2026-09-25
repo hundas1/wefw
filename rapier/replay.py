@@ -13,14 +13,14 @@ import copy
 import pandas as pd
 
 from . import data as D
-from .backtest import Market, run
+from .backtest import Market, Run
 from .brokers.base import SimBroker
 from .executor import ExecConfig, Executor
-from .live import engine_view
-from .system import build
+from .live import EngineView
+from .system import Build
 
 
-def live_params(params: dict, books: tuple[str, ...]) -> dict:
+def LiveParams(params: dict, books: tuple[str, ...]) -> dict:
     p = copy.deepcopy(params)
     p["swing"]["enabled"] = False
     p["intraday"]["enabled"] = "ote-1h" in books
@@ -29,36 +29,36 @@ def live_params(params: dict, books: tuple[str, ...]) -> dict:
     return p
 
 
-def replay(frames: dict[str, pd.DataFrame], params: dict, books: tuple[str, ...], start, end,
+def Replay(frames: dict[str, pd.DataFrame], params: dict, books: tuple[str, ...], start, end,
            window: tuple[float, float] = (8.0, 16.75), m1_days: int = 4, h1_days: int = 300):
-    p = live_params(params, books)
+    p = LiveParams(params, books)
     sim = SimBroker(slip=0.25)
     ex = Executor(sim, ExecConfig(live_books=books, stale_after=pd.Timedelta("10min")))
     m1 = frames["1m"]
     idx = m1.index[(m1.index >= pd.Timestamp(start, tz=D.TZ)) & (m1.index < pd.Timestamp(end, tz=D.TZ))]
     for t in idx:
         row = m1.loc[t]
-        sim.on_bar(t, row.open, row.high, row.low, row.close)
+        sim.OnBar(t, row.open, row.high, row.low, row.close)
         hour = t.hour + t.minute / 60
-        if not (window[0] <= hour < window[1]) and not sim.position() and not sim.groups():
+        if not (window[0] <= hour < window[1]) and not sim.Position() and not sim.Groups():
             continue
         cut = t + pd.Timedelta("1min")
         sl = {k: f[(f.index < cut) & (f.index >= cut - pd.Timedelta(days=m1_days if k != "1h" else h1_days))]
               for k, f in frames.items()}
-        mkt = Market.from_1h(sl["1h"], {k: sl[k] for k in ("1m", "5m", "15m")}, base_tf="1m")
-        view, _ = engine_view(mkt, p, lookback_days=m1_days - 1)
-        ex.step(view, wall=cut + pd.Timedelta(seconds=3))
+        mkt = Market.From1h(sl["1h"], {k: sl[k] for k in ("1m", "5m", "15m")}, base_tf="1m")
+        view, _ = EngineView(mkt, p, lookback_days=m1_days - 1)
+        ex.Step(view, wall=cut + pd.Timedelta(seconds=3))
     return pd.DataFrame(sim.trades)
 
 
-def backtest_trades(frames, params, books, start, end) -> pd.DataFrame:
-    p = live_params(params, books)
-    mkt = Market.from_1h(frames["1h"], {k: frames[k] for k in ("1m", "5m", "15m")}, base_tf="1m")
-    b, r = build(p)
-    return run(mkt, b, r, start=start, end=end).trades
+def BacktestTrades(frames, params, books, start, end) -> pd.DataFrame:
+    p = LiveParams(params, books)
+    mkt = Market.From1h(frames["1h"], {k: frames[k] for k in ("1m", "5m", "15m")}, base_tf="1m")
+    b, r = Build(p)
+    return Run(mkt, b, r, start=start, end=end).trades
 
 
-def compare(bt: pd.DataFrame, live: pd.DataFrame, tol: pd.Timedelta = pd.Timedelta("2min")) -> dict:
+def Compare(bt: pd.DataFrame, live: pd.DataFrame, tol: pd.Timedelta = pd.Timedelta("2min")) -> dict:
     """Pair trades by side and entry time (live entries may be one bar later)."""
     used, pairs = set(), []
     for i, t in bt.iterrows():

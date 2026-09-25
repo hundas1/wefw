@@ -21,9 +21,9 @@ import numpy as np
 import pandas as pd
 
 from . import data as D
-from .features import context
-from .indicators import ema, structure_trend
-from .strategy import SetupParams, Setups, find_setups
+from .features import Context
+from .indicators import Ema, StructureTrend
+from .strategy import SetupParams, Setups, FindSetups
 
 TICK = 0.25
 TF_DELTA = {"1D": pd.Timedelta("1D"), "4h": pd.Timedelta("4h"), "1h": pd.Timedelta("1h"),
@@ -114,7 +114,7 @@ class Trade:
     fills: list = field(default_factory=list)
     feat: dict = field(default_factory=dict)
 
-    def to_row(self) -> dict:
+    def ToRow(self) -> dict:
         d = asdict(self)
         for k in ("qty_open", "cur_stop", "bars", "fills", "feat"):
             d.pop(k)
@@ -136,58 +136,58 @@ class Market:
     """Bars for every timeframe plus cached setups/bias to make sweeps cheap."""
 
     def __init__(self, base: pd.DataFrame, frames: dict[str, pd.DataFrame]):
-        frames = {k: _ns(v) for k, v in frames.items()}
-        base = _ns(base)
+        frames = {k: _Ns(v) for k, v in frames.items()}
+        base = _Ns(base)
         self.base = base
         self.frames = frames
         self._setups: dict = {}
         self._trend: dict = {}
         self._ctx = None
 
-    def context(self) -> pd.DataFrame:
+    def Context(self) -> pd.DataFrame:
         if self._ctx is None:
-            self._ctx = context(self.base, self.frames["1D"])
+            self._ctx = Context(self.base, self.frames["1D"])
         return self._ctx
 
     @classmethod
-    def from_1h(cls, h1: pd.DataFrame, lower: dict[str, pd.DataFrame] | None = None,
+    def From1h(cls, h1: pd.DataFrame, lower: dict[str, pd.DataFrame] | None = None,
                 base_tf: str = "1h") -> "Market":
-        frames = {"1h": h1, "4h": D.resample(h1, "4h"), "1D": D.resample(h1, "1D")}
+        frames = {"1h": h1, "4h": D.Resample(h1, "4h"), "1D": D.Resample(h1, "1D")}
         frames.update(lower or {})
         return cls(frames[base_tf], frames)
 
-    def setups(self, tf: str, p: SetupParams) -> Setups:
+    def Setups(self, tf: str, p: SetupParams) -> Setups:
         key = (tf, p)
         if key not in self._setups:
-            self._setups[key] = find_setups(self.frames[tf], TF_DELTA[tf] if tf != "1D" else pd.Timedelta(0), p)
+            self._setups[key] = FindSetups(self.frames[tf], TF_DELTA[tf] if tf != "1D" else pd.Timedelta(0), p)
         return self._setups[key]
 
-    def trend(self, tf: str, k: int) -> tuple[np.ndarray, np.ndarray]:
+    def Trend(self, tf: str, k: int) -> tuple[np.ndarray, np.ndarray]:
         key = (tf, k)
         if key not in self._trend:
             f = self.frames[tf]
             ct = f.index.asi8 if tf == "1D" else (f.index + TF_DELTA[tf]).asi8
-            self._trend[key] = (ct, structure_trend(f, k))
+            self._trend[key] = (ct, StructureTrend(f, k))
         return self._trend[key]
 
 
-def _asof(close_times: np.ndarray, t: np.ndarray) -> np.ndarray:
+def _Asof(close_times: np.ndarray, t: np.ndarray) -> np.ndarray:
     """Index of the latest bar complete at or before each time in ``t`` (or -1)."""
     return np.searchsorted(close_times, t, side="right") - 1
 
 
-def _ns(df: pd.DataFrame) -> pd.DataFrame:
+def _Ns(df: pd.DataFrame) -> pd.DataFrame:
     if df.index.unit != "ns":
         df = df.copy()
         df.index = df.index.as_unit("ns")
     return df
 
 
-def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
+def Run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
         start: str | pd.Timestamp | None = None, end: str | pd.Timestamp | None = None,
         record_features: bool = False, close_at_end: bool = True) -> Result:
     base = mkt.base
-    cx_all = mkt.context()
+    cx_all = mkt.Context()
     if start is not None:
         base = base[base.index >= pd.Timestamp(start, tz=D.TZ)]
     if end is not None:
@@ -203,7 +203,7 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
     base_delta = pd.Timedelta(mkt.base.index.to_series().diff().mode().iloc[0])
     hours = (base.index.hour + base.index.minute / 60).to_numpy()
     end_hours = hours + base_delta / pd.Timedelta("1h")
-    tday = D.trading_day(base.index).asi8
+    tday = D.TradingDay(base.index).asi8
     n = len(base)
 
     pv, slip = risk.point_value, risk.slippage_ticks * TICK
@@ -213,16 +213,16 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
     trend_feats = {}
     if record_features:
         for btf in ("1D", "4h", "1h"):
-            ct, tr = mkt.trend(btf, risk.bias_k)
-            bi = _asof(ct, t_ns)
+            ct, tr = mkt.Trend(btf, risk.bias_k)
+            bi = _Asof(ct, t_ns)
             trend_feats[f"bias_{btf}"] = np.where(bi >= 0, tr[np.maximum(bi, 0)], 0)
     for b in books:
-        s = mkt.setups(b.tf, b.setup)
-        tf_idx = _asof(s.close_time, t_ns)
+        s = mkt.Setups(b.tf, b.setup)
+        tf_idx = _Asof(s.close_time, t_ns)
         bias = np.ones(n, int) * 2  # 2 = both directions allowed
         for btf in b.bias_tfs:
-            ct, tr = mkt.trend(btf, risk.bias_k)
-            bi = _asof(ct, t_ns)
+            ct, tr = mkt.Trend(btf, risk.bias_k)
+            bi = _Asof(ct, t_ns)
             trv = np.where(bi >= 0, tr[np.maximum(bi, 0)], 0)
             bias = np.where(bias == 2, trv, np.where(bias == trv, bias, 0))
         if b.sessions:
@@ -236,8 +236,8 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
         ema_at = None
         if b.ema_tf:
             ef = mkt.frames[b.ema_tf]
-            ev = ema(ef["close"].to_numpy(), 9)
-            ei = _asof((ef.index + TF_DELTA[b.ema_tf]).asi8, t_ns)
+            ev = Ema(ef["close"].to_numpy(), 9)
+            ei = _Asof((ef.index + TF_DELTA[b.ema_tf]).asi8, t_ns)
             ema_at = np.where(ei >= 0, ev[np.maximum(ei, 0)], np.nan)
         ctx.append(dict(cfg=b, s=s, tf_idx=tf_idx, bias=bias, sess=sess, ema=ema_at))
 
@@ -252,7 +252,7 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
     eq_close = np.zeros(n)
     eq_low = np.zeros(n)
 
-    def close_qty(tr: Trade, qty: int, px: float, when, reason: str):
+    def CloseQty(tr: Trade, qty: int, px: float, when, reason: str):
         nonlocal realized
         pnl = tr.side * (px - tr.entry) * qty * pv - risk.commission_rt * qty
         tr.pnl += pnl
@@ -276,11 +276,11 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
             cfg = ctx[bi_]["cfg"]
             tr.bars += 1
             if flat_bar and not (risk.swing_overnight and cfg.name.startswith("swing")):
-                close_qty(tr, tr.qty_open, o[i] - tr.side * slip, when, "eod")
+                CloseQty(tr, tr.qty_open, o[i] - tr.side * slip, when, "eod")
                 del open_pos[bi_]
                 continue
             if cfg.flat_after is not None and cfg.flat_after <= hours[i] < 17.5:
-                close_qty(tr, tr.qty_open, o[i] - tr.side * slip, when, "flat")
+                CloseQty(tr, tr.qty_open, o[i] - tr.side * slip, when, "flat")
                 del open_pos[bi_]
                 continue
             adverse = l[i] if tr.side > 0 else h[i]
@@ -290,10 +290,10 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
             if tr.side * (adverse - tr.cur_stop) <= 0:
                 gap = tr.side * (o[i] - tr.cur_stop) < 0
                 px = (o[i] if gap else tr.cur_stop) - tr.side * slip
-                close_qty(tr, tr.qty_open, px, when, "tp1+stop" if tr.tp1_hit else "stop")
+                CloseQty(tr, tr.qty_open, px, when, "tp1+stop" if tr.tp1_hit else "stop")
                 del open_pos[bi_]
                 continue
-            _targets(tr, cfg, favor, when, close_qty)
+            _Targets(tr, cfg, favor, when, CloseQty)
             if tr.qty_open == 0:
                 del open_pos[bi_]
                 continue
@@ -310,7 +310,7 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                         if tr.side * (cand - tr.cur_stop) > 0 and tr.side * (c[i] - cand) > 0:
                             tr.cur_stop = cand
             if cfg.max_hold and tr.bars >= cfg.max_hold:
-                close_qty(tr, tr.qty_open, c[i] - tr.side * slip, when, "time")
+                CloseQty(tr, tr.qty_open, c[i] - tr.side * slip, when, "time")
                 del open_pos[bi_]
 
         # ---- new entries
@@ -336,8 +336,8 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                     entry = (o[i + 1] if contiguous else c[i]) + side * slip
                     if pd_["cfg"].fixed_stop_pts:
                         stop = entry - side * pd_["cfg"].fixed_stop_pts
-                    _open(pd_["cfg"], bi_, side, entry, stop, pd_["H"], pd_["D"], when, i,
-                          pd_["feat"], trades, open_pos, day_count, td, risk, dd_now, close_qty,
+                    _Open(pd_["cfg"], bi_, side, entry, stop, pd_["H"], pd_["D"], when, i,
+                          pd_["feat"], trades, open_pos, day_count, td, risk, dd_now, CloseQty,
                           c, l, h, confirm_bar=True)
                 continue
             k = cx["tf_idx"][i]
@@ -360,7 +360,7 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                     continue
                 if day_count.get((td, bi_), 0) >= cfg.max_trades_day:
                     continue
-                if not _context_ok(cfg, side, i, f_pd, f_mid, f_dop, f_spl, f_sph):
+                if not _ContextOk(cfg, side, i, f_pd, f_mid, f_dop, f_spl, f_sph):
                     continue
                 if cx["ema"] is not None:
                     ev = cx["ema"][i]
@@ -382,8 +382,8 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                     pending[bi_] = dict(cfg=cfg, side=side, E=E, stop=stop, H=S["H"][k], D=S["D"][k],
                                         until=i + cfg.confirm_bars, feat=f)
                     break
-                _open(cfg, bi_, side, fill, stop, S["H"][k], S["D"][k], when, i, f, trades,
-                      open_pos, day_count, td, risk, dd_now, close_qty, c, l, h)
+                _Open(cfg, bi_, side, fill, stop, S["H"][k], S["D"][k], when, i, f, trades,
+                      open_pos, day_count, td, risk, dd_now, CloseQty, c, l, h)
                 break
 
         # ---- equity marks
@@ -398,9 +398,9 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
     if close_at_end:
         for bi_, tr in list(open_pos.items()):
             td = int(tday[-1])
-            close_qty(tr, tr.qty_open, c[-1], base.index[-1], "end")
+            CloseQty(tr, tr.qty_open, c[-1], base.index[-1], "end")
 
-    tdf = pd.DataFrame([t.to_row() for t in trades])
+    tdf = pd.DataFrame([t.ToRow() for t in trades])
     eq = pd.DataFrame({"equity": eq_close, "equity_low": eq_low}, index=base.index)
     # keyed by anchor *timestamp*: bar indices shift when a live data window slides
     names = frozenset(f"{books[b].name}:{s}:{ctx[b]['s'].index[a].isoformat()}" for b, s, a in consumed)
@@ -408,7 +408,7 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
     return Result(tdf, eq, tuple(books), risk, names, tuple(open_pos.values()), scale)
 
 
-def _open(cfg, bi_, side, fill, stop, H, Dleg, when, i, feat, trades, open_pos, day_count, td,
+def _Open(cfg, bi_, side, fill, stop, H, Dleg, when, i, feat, trades, open_pos, day_count, td,
           risk: RiskConfig, dd_now, close_qty, c, l, h, confirm_bar=False) -> None:
     pv, slip = risk.point_value, risk.slippage_ticks * TICK
     risk_pts = side * (fill - stop)
@@ -438,12 +438,12 @@ def _open(cfg, bi_, side, fill, stop, H, Dleg, when, i, feat, trades, open_pos, 
     if side * (adverse - stop) <= 0:
         close_qty(tr, qty, stop - side * slip, when, "stop")
     else:
-        _targets(tr, cfg, c[i], when, close_qty)
+        _Targets(tr, cfg, c[i], when, close_qty)
         if tr.qty_open:
             open_pos[bi_] = tr
 
 
-def _context_ok(cfg: BookConfig, side: int, i: int, f_pd, f_mid, f_dop, f_spl, f_sph) -> bool:
+def _ContextOk(cfg: BookConfig, side: int, i: int, f_pd, f_mid, f_dop, f_spl, f_sph) -> bool:
     if cfg.pd_max is not None:
         v = f_pd[i]
         if math.isnan(v) or (side > 0 and v > cfg.pd_max) or (side < 0 and v < 1 - cfg.pd_max):
@@ -459,7 +459,7 @@ def _context_ok(cfg: BookConfig, side: int, i: int, f_pd, f_mid, f_dop, f_spl, f
     return True
 
 
-def _targets(tr: Trade, cfg: BookConfig, favor: float, when, close_qty) -> None:
+def _Targets(tr: Trade, cfg: BookConfig, favor: float, when, close_qty) -> None:
     side = tr.side
     if not tr.tp1_hit and side * (favor - tr.tp1) >= 0:
         tr.tp1_hit = True

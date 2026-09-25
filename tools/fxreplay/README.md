@@ -27,7 +27,7 @@ the exact orders Rapier would have placed, at the same replay time.
 ## Gotchas we hit
 - **Prices:** Rapier's prices are roll-adjusted. Before 2026-09-14 subtract 279.25 to get FX Replay's price; `run_days.py` does this (`ROLL`, `ADJ` at the top).
 - **Holidays:** "Next Session" can land on a holiday chart (Labor Day happened once). `run_days.py` now reads the date from the "Go to a date" dialog and refuses to trade the wrong day.
-- **Popups:** FX Replay's feedback popups block clicks; `browser.dismiss()` closes them.
+- **Popups:** FX Replay's feedback popups block clicks; `browser.Dismiss()` closes them.
 - **Flattening:** FX Replay's "Close positions" button only closes the panel. To flatten, send an opposite market order.
 - **Hidden cancels:** Rapier's simulator cancels other resting orders silently when one fills (one-cancels-all). The schedule doesn't show those cancels, so a few orders stayed live in FX Replay and filled. Treat such "extra fills" as harness noise.
 - **Timing:** it's slow. A full day takes 10–30 minutes depending on how many orders there are.

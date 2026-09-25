@@ -30,7 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 from .. import data as D
-from .base import net_position, round_tick
+from .base import NetPosition, RoundTick
 
 log = logging.getLogger("rapier.tradara")
 
@@ -51,7 +51,7 @@ class TradaraError(RuntimeError):
     pass
 
 
-def allowed_accounts() -> set[str]:
+def AllowedAccounts() -> set[str]:
     return {a.strip() for a in os.environ.get("RAPIER_TRADARA_ALLOWED_ACCOUNTS", "").split(",") if a.strip()}
 
 
@@ -60,7 +60,7 @@ class TradaraBroker:
 
     def __init__(self, account_id: str, root: str = "MNQ", token_file: str | Path | None = None,
                  session=None, contract_symbol: str | None = None):
-        if account_id not in allowed_accounts():
+        if account_id not in AllowedAccounts():
             raise TradaraError(f"account {account_id!r} is not in RAPIER_TRADARA_ALLOWED_ACCOUNTS")
         if root not in ("MNQ", "NQ"):
             raise TradaraError("root must be MNQ or NQ")
@@ -81,13 +81,13 @@ class TradaraBroker:
         self._start_balance: tuple[str, float] | None = None
 
     # ------------------------------------------------------------------ auth
-    def _tokens(self) -> dict:
+    def _Tokens(self) -> dict:
         if not self.token_file.exists():
             raise TradaraError(f"no token file at {self.token_file}; run `rapier tradara-login`")
         return json.loads(self.token_file.read_text())
 
-    def _refresh(self, force: bool = False) -> None:
-        tok = self._tokens()
+    def _Refresh(self, force: bool = False) -> None:
+        tok = self._Tokens()
         exp = float(tok.get("obtained_at", 0)) + float(tok.get("expires_in", 3600)) - 120
         if not force and time.time() < exp:
             self._access, self._exp = tok["access_token"], exp
@@ -98,15 +98,15 @@ class TradaraBroker:
         if r.status_code >= 400:
             raise TradaraError(f"token refresh failed (HTTP {r.status_code}); run `rapier tradara-login` again")
         body = r.json()
-        save_tokens(self.token_file, body, tok)
+        SaveTokens(self.token_file, body, tok)
         self._access = body["access_token"]
         self._exp = time.time() + float(body.get("expires_in", 3600)) - 120
 
-    def _req(self, method: str, path: str, *, params=None, body=None, idem: str | None = None):
+    def _Req(self, method: str, path: str, *, params=None, body=None, idem: str | None = None):
         if body and body.get("account_id") not in (None, self.account_id):
             raise TradaraError("refusing an order for a different account")
         if not self._access or time.time() >= self._exp:
-            self._refresh()
+            self._Refresh()
         for attempt in (0, 1):
             h = {"Authorization": f"Bearer {self._access}"}
             if idem:
@@ -115,7 +115,7 @@ class TradaraBroker:
                 h["Content-Type"] = "application/json"
             r = self.s.request(method, f"{API}{path}", params=params, json=body, headers=h, timeout=30)
             if r.status_code == 401 and attempt == 0:
-                self._refresh(force=True)
+                self._Refresh(force=True)
                 continue
             break
         if r.status_code >= 400:
@@ -123,15 +123,15 @@ class TradaraBroker:
         return r.json() if r.content else None
 
     # ------------------------------------------------------------ instrument
-    def instrument_id(self) -> str:
+    def InstrumentId(self) -> str:
         if self._iid:
             return self._iid
-        from ..feeds.ibkr import front_expiry
+        from ..feeds.ibkr import FrontExpiry
 
-        exp = front_expiry(pd.Timestamp.now(tz=D.TZ))
+        exp = FrontExpiry(pd.Timestamp.now(tz=D.TZ))
         code = "FGHJKMNQUVXZ"[exp.month - 1]
         want = self.contract_symbol or f"/{self.root}{code}{exp.year % 100:02d}"
-        items = (self._req("GET", "/v1/instruments", params={"q": self.root, "limit": 100}) or {}).get("items") or []
+        items = (self._Req("GET", "/v1/instruments", params={"q": self.root, "limit": 100}) or {}).get("items") or []
         for it in items:
             sym = str(it.get("symbol") or "").upper()
             if sym in (want.upper(), want.upper().lstrip("/")):
@@ -140,15 +140,15 @@ class TradaraBroker:
         raise TradaraError(f"Tradara instrument {want} not found")
 
     # ------------------------------------------------------------- interface
-    def check(self) -> dict:
-        self._refresh()
-        bal = self._balance()
+    def Check(self) -> dict:
+        self._Refresh()
+        bal = self._Balance()
         return {"broker": "tradara", "account": self.account_id, "instrument": self.contract_symbol,
-                "instrument_id": self.instrument_id(), "balance": bal, "position": self.position(),
-                "rapier_open_orders": len(self._open_orders())}
+                "instrument_id": self.InstrumentId(), "balance": bal, "position": self.Position(),
+                "rapier_open_orders": len(self._OpenOrders())}
 
-    def _balance(self) -> float | None:
-        items = (self._req("GET", "/v1/balances", params={"account_id": self.account_id}) or {}).get("items") or []
+    def _Balance(self) -> float | None:
+        items = (self._Req("GET", "/v1/balances", params={"account_id": self.account_id}) or {}).get("items") or []
         for it in items:
             if str(it.get("account_id")) == self.account_id:
                 try:
@@ -157,18 +157,18 @@ class TradaraBroker:
                     return None
         return None
 
-    def _open_orders(self) -> list[dict]:
-        items = (self._req("GET", "/v1/orders", params={"account_id": self.account_id}) or {}).get("items") or []
+    def _OpenOrders(self) -> list[dict]:
+        items = (self._Req("GET", "/v1/orders", params={"account_id": self.account_id}) or {}).get("items") or []
         return [o for o in items if str(o.get("status") or "").upper() in OPEN
                 and str(o.get("client_order_id") or "").startswith("rp-")]
 
-    def position(self) -> int:
-        items = (self._req("GET", "/v1/positions", params={"account_id": self.account_id}) or {}).get("items") or []
-        return net_position(items, self.instrument_id(), self.root)
+    def Position(self) -> int:
+        items = (self._Req("GET", "/v1/positions", params={"account_id": self.account_id}) or {}).get("items") or []
+        return NetPosition(items, self.InstrumentId(), self.root)
 
-    def groups(self) -> dict[str, dict]:
+    def Groups(self) -> dict[str, dict]:
         out: dict[str, dict] = {}
-        for o in self._open_orders():
+        for o in self._OpenOrders():
             coid = str(o["client_order_id"])
             prefix, _, leg = coid.rpartition("-")
             g = out.setdefault(prefix, {"state": "active", "orders": []})
@@ -177,58 +177,58 @@ class TradaraBroker:
                 g["state"] = "working"
         return out
 
-    def place_bracket(self, prefix, side, qty, entry, stop, target):
-        iid = self.instrument_id()
+    def PlaceBracket(self, prefix, side, qty, entry, stop, target):
+        iid = self.InstrumentId()
         es, xs = ("BUY", "SELL") if side > 0 else ("SELL", "BUY")
         leg = lambda role, s, typ, suffix, **px: {  # noqa: E731
             "role": role, "account_id": self.account_id, "instrument_id": iid, "side": s,
             "execution_type": typ, "quantity": int(qty), "time_in_force": "GTC" if typ != "MARKET" else "DAY",
             "position_effect": "OPEN" if role == "ENTRY" else "CLOSE", "client_order_id": f"{prefix}-{suffix}",
-            **{k: round_tick(v) for k, v in px.items()}}
+            **{k: RoundTick(v) for k, v in px.items()}}
         entry_leg = leg("ENTRY", es, "MARKET", "e") if entry is None else leg("ENTRY", es, "LIMIT", "e", limit_price=entry)
         body = {"account_id": self.account_id, "kind": "OTOCO", "orders": [
             entry_leg,
             leg("TAKE_PROFIT", xs, "LIMIT", "tp", limit_price=target),
             leg("STOP_LOSS", xs, "STOP", "sl", stop_price=stop)]}
-        data = self._req("POST", "/v1/orders/groups", body=body, idem=f"rapier-{prefix}") or {}
+        data = self._Req("POST", "/v1/orders/groups", body=body, idem=f"rapier-{prefix}") or {}
         item = data.get("item") if isinstance(data.get("item"), dict) else data
         gid = item.get("id") or item.get("group_id")
         if gid:
             self._groups[prefix] = str(gid)
 
-    def cancel(self, prefix):
+    def Cancel(self, prefix):
         gid = self._groups.pop(prefix, None)
         if gid:
-            self._req("DELETE", f"/v1/orders/groups/{gid}", params={"account_id": self.account_id})
+            self._Req("DELETE", f"/v1/orders/groups/{gid}", params={"account_id": self.account_id})
             return
-        for o in self._open_orders():
+        for o in self._OpenOrders():
             if str(o["client_order_id"]).startswith(prefix + "-"):
-                self._req("POST", f"/v1/orders/{o['id']}/cancel", body={}, idem=f"rapier-cx-{o['id']}")
+                self._Req("POST", f"/v1/orders/{o['id']}/cancel", body={}, idem=f"rapier-cx-{o['id']}")
 
-    def flatten(self):
-        for prefix in list(self.groups()):
-            self.cancel(prefix)
-        pos = self.position()
+    def Flatten(self):
+        for prefix in list(self.Groups()):
+            self.Cancel(prefix)
+        pos = self.Position()
         if pos:
-            self._req("POST", "/v1/orders", idem=f"rapier-flat-{int(time.time())}", body={
-                "account_id": self.account_id, "instrument_id": self.instrument_id(),
+            self._Req("POST", "/v1/orders", idem=f"rapier-flat-{int(time.time())}", body={
+                "account_id": self.account_id, "instrument_id": self.InstrumentId(),
                 "side": "SELL" if pos > 0 else "BUY", "execution_type": "MARKET", "quantity": abs(pos),
                 "time_in_force": "DAY", "position_effect": "CLOSE",
                 "client_order_id": f"rp-flat-{int(time.time())}"})
 
-    def day_pnl(self) -> float | None:
+    def DayPnl(self) -> float | None:
         """Balance change since the first check of the current trading day."""
-        bal = self._balance()
+        bal = self._Balance()
         if bal is None:
             return None
-        day = str(D.trading_day(pd.DatetimeIndex([pd.Timestamp.now(tz=D.TZ)]))[0].date())
+        day = str(D.TradingDay(pd.DatetimeIndex([pd.Timestamp.now(tz=D.TZ)]))[0].date())
         if not self._start_balance or self._start_balance[0] != day:
             self._start_balance = (day, bal)
         return bal - self._start_balance[1]
 
 
 # ------------------------------------------------------------------ login
-def save_tokens(path: Path, body: dict, prev: dict | None = None) -> None:
+def SaveTokens(path: Path, body: dict, prev: dict | None = None) -> None:
     prev = prev or {}
     out = {"access_token": body["access_token"],
            "refresh_token": body.get("refresh_token") or prev.get("refresh_token"),
@@ -239,20 +239,20 @@ def save_tokens(path: Path, body: dict, prev: dict | None = None) -> None:
     os.chmod(path, 0o600)
 
 
-def pkce_pair() -> tuple[str, str]:
+def PkcePair() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(64)[:96]
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
     return verifier, challenge
 
 
-def authorize_url(challenge: str) -> str:
+def AuthorizeUrl(challenge: str) -> str:
     q = {"response_type": "code", "client_id": CLIENT_ID, "redirect_uri": REDIRECT, "scope": SCOPES,
          "code_challenge": challenge, "code_challenge_method": "S256", "resource": RESOURCE,
          "state": secrets.token_urlsafe(12)}
     return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(q)}"
 
 
-def exchange_code(code: str, verifier: str, token_file: Path, session=None) -> None:
+def ExchangeCode(code: str, verifier: str, token_file: Path, session=None) -> None:
     import requests
 
     s = session or requests.Session()
@@ -261,4 +261,4 @@ def exchange_code(code: str, verifier: str, token_file: Path, session=None) -> N
                headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": UA}, timeout=30)
     if r.status_code >= 400:
         raise TradaraError(f"code exchange failed (HTTP {r.status_code}): {(r.text or '')[:200]}")
-    save_tokens(token_file, r.json())
+    SaveTokens(token_file, r.json())

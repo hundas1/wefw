@@ -3,7 +3,7 @@
 Yahoo's ``NQ=F`` is an *unadjusted* continuous contract. It switches to the
 next quarterly contract roughly a week before expiry, and during the switch
 some hourly bars mix prices from both contracts (±~250 pt flips). Left alone
-that creates fake swings and fake P&L, so :func:`roll_adjust` detects each
+that creates fake swings and fake P&L, so :func:`RollAdjust` detects each
 switch, drops the contaminated bars and back-adjusts older history.
 """
 
@@ -25,7 +25,7 @@ COLS = ["open", "high", "low", "close", "volume"]
 _PERIODS = {"1h": "730d", "15m": "60d", "5m": "60d", "1m": "8d", "1d": "5y"}
 
 
-def _normalize(df: pd.DataFrame) -> pd.DataFrame:
+def _Normalize(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.rename(columns=str.lower)[COLS].astype(float)
@@ -38,35 +38,35 @@ def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(subset=["open", "high", "low", "close"])
 
 
-def cache_path(interval: str, symbol: str = SYMBOL) -> Path:
+def CachePath(interval: str, symbol: str = SYMBOL) -> Path:
     return DATA_DIR / f"{symbol.replace('=', '_')}_{interval}.csv.gz"
 
 
-def load_csv(path: str | Path) -> pd.DataFrame:
+def LoadCsv(path: str | Path) -> pd.DataFrame:
     """Load OHLCV from a CSV with a time column (e.g. a Databento/TradingView export)."""
     df = pd.read_csv(path)
     tcol = next(c for c in df.columns if c.lower() in ("time", "datetime", "date", "timestamp", "ts_event"))
     df = df.set_index(pd.to_datetime(df[tcol], utc=True)).drop(columns=[tcol])
     if "volume" not in {c.lower() for c in df.columns}:
         df["volume"] = 0.0
-    return _normalize(df)
+    return _Normalize(df)
 
 
-def fetch(interval: str, symbol: str = SYMBOL, refresh: bool = True) -> pd.DataFrame:
+def Fetch(interval: str, symbol: str = SYMBOL, refresh: bool = True) -> pd.DataFrame:
     """Fetch bars from Yahoo and merge them into an append-only local cache.
 
     The cache only grows, so running ``rapier fetch`` regularly accumulates
     5m/15m history beyond Yahoo's 60-day window.
     """
-    path = cache_path(interval, symbol)
-    cached = load_csv(path) if path.exists() else None
+    path = CachePath(interval, symbol)
+    cached = LoadCsv(path) if path.exists() else None
     if refresh or cached is None:
         import yfinance as yf
 
         new = yf.download(symbol, period=_PERIODS[interval], interval=interval,
                           progress=False, auto_adjust=False)
         if len(new):
-            new = _normalize(new)
+            new = _Normalize(new)
             merged = new if cached is None else pd.concat([cached, new])
             merged = merged[~merged.index.duplicated(keep="last")].sort_index()
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,7 +77,7 @@ def fetch(interval: str, symbol: str = SYMBOL, refresh: bool = True) -> pd.DataF
     return cached
 
 
-def native_days(df: pd.DataFrame, max_repeat: float = 0.1) -> pd.DataFrame:
+def NativeDays(df: pd.DataFrame, max_repeat: float = 0.1) -> pd.DataFrame:
     """Keep only trading days whose bars are genuinely at this resolution.
 
     Some saved "1m" tapes are coarser bars forward-filled onto a 1m grid (every
@@ -85,25 +85,25 @@ def native_days(df: pd.DataFrame, max_repeat: float = 0.1) -> pd.DataFrame:
     more than ``max_repeat`` of the rows exactly repeat the previous OHLC is dropped.
     """
     rep = df[["open", "high", "low", "close"]].diff().abs().sum(axis=1).eq(0)
-    td = trading_day(df.index)
+    td = TradingDay(df.index)
     share = rep.groupby(td).mean()
     good = share[share <= max_repeat].index
     return df[td.isin(good)]
 
 
-def import_tape(path: str | Path, interval: str, symbol: str = SYMBOL) -> tuple[int, int]:
+def ImportTape(path: str | Path, interval: str, symbol: str = SYMBOL) -> tuple[int, int]:
     """Merge an external OHLCV CSV into the local cache (validated, native days only).
 
     Existing cached bars win on overlap. Returns (rows added, days rejected).
     """
-    new = load_csv(path)
+    new = LoadCsv(path)
     step = new.index.to_series().diff().mode().iloc[0]
     if step != pd.Timedelta(interval):
         raise ValueError(f"{path}: bar spacing {step} does not match {interval}")
-    kept = native_days(new)
-    rejected = trading_day(new.index).nunique() - trading_day(kept.index).nunique()
-    p = cache_path(interval, symbol)
-    cached = load_csv(p) if p.exists() else kept.iloc[:0]
+    kept = NativeDays(new)
+    rejected = TradingDay(new.index).nunique() - TradingDay(kept.index).nunique()
+    p = CachePath(interval, symbol)
+    cached = LoadCsv(p) if p.exists() else kept.iloc[:0]
     merged = pd.concat([kept, cached])
     merged = merged[~merged.index.duplicated(keep="last")].sort_index()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -113,16 +113,16 @@ def import_tape(path: str | Path, interval: str, symbol: str = SYMBOL) -> tuple[
 
 # --------------------------------------------------------------------------- rolls
 
-def third_friday(year: int, month: int) -> dt.date:
+def ThirdFriday(year: int, month: int) -> dt.date:
     d = dt.date(year, month, 15)
     return d + dt.timedelta(days=(4 - d.weekday()) % 7)
 
 
-def quarterly_expiries(start: pd.Timestamp, end: pd.Timestamp) -> list[dt.date]:
+def QuarterlyExpiries(start: pd.Timestamp, end: pd.Timestamp) -> list[dt.date]:
     out = []
     for y in range(start.year, end.year + 1):
         for m in (3, 6, 9, 12):
-            e = third_friday(y, m)
+            e = ThirdFriday(y, m)
             if start.date() - dt.timedelta(days=14) <= e <= end.date() + dt.timedelta(days=14):
                 out.append(e)
     return out
@@ -138,7 +138,7 @@ class Roll:
     drop_from: pd.Timestamp | None = None  # contaminated bars span [drop_from, switch)
 
 
-def detect_rolls(df: pd.DataFrame, carry: float = 0.0095) -> list[Roll]:
+def DetectRolls(df: pd.DataFrame, carry: float = 0.0095) -> list[Roll]:
     """Find the bar where ``NQ=F`` switches contract before each quarterly expiry.
 
     Every switch verified against the dated NQZ26 contract happened inside
@@ -152,7 +152,7 @@ def detect_rolls(df: pd.DataFrame, carry: float = 0.0095) -> list[Roll]:
     rolls = []
     jump = df["open"] - df["close"].shift()
     gap_open = df.index.to_series().diff() > pd.Timedelta("90min")
-    for exp in quarterly_expiries(df.index[0], df.index[-1]):
+    for exp in QuarterlyExpiries(df.index[0], df.index[-1]):
         lo = pd.Timestamp(exp - dt.timedelta(days=5), tz=TZ) + pd.Timedelta(hours=12)
         hi = pd.Timestamp(exp, tz=TZ)
         w = jump.loc[lo:hi]
@@ -178,12 +178,12 @@ def detect_rolls(df: pd.DataFrame, carry: float = 0.0095) -> list[Roll]:
     return rolls
 
 
-def roll_adjust(df: pd.DataFrame, rolls: list[Roll] | None = None) -> tuple[pd.DataFrame, list[Roll]]:
+def RollAdjust(df: pd.DataFrame, rolls: list[Roll] | None = None) -> tuple[pd.DataFrame, list[Roll]]:
     """Back-adjust prices (additively) so history is continuous with the latest contract.
 
     Pass ``rolls`` detected on 1h data to adjust other timeframes consistently.
     """
-    rolls = detect_rolls(df) if rolls is None else rolls
+    rolls = DetectRolls(df) if rolls is None else rolls
     out = df.copy()
     drop = np.zeros(len(out), bool)
     for r in rolls:
@@ -197,16 +197,16 @@ def roll_adjust(df: pd.DataFrame, rolls: list[Roll] | None = None) -> tuple[pd.D
 
 # ---------------------------------------------------------------------- resampling
 
-def trading_day(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+def TradingDay(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """CME trading date: the session that opens 18:00 ET belongs to the next day."""
     return (index + pd.Timedelta(hours=6)).normalize().tz_localize(None)
 
 
-def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+def Resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     """Resample to ``4h`` (session-aligned: 18,22,02,06,10,14 ET) or ``1D`` (trading day)."""
     agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     if rule.upper() in ("1D", "D"):
-        g = df.groupby(trading_day(df.index)).agg(agg)
+        g = df.groupby(TradingDay(df.index)).agg(agg)
         g.index = pd.DatetimeIndex(g.index).tz_localize(TZ) + pd.Timedelta(hours=17)
         g.index.name = "time"
         # stamp daily bars at their *close* (17:00 ET) so consumers can't peek early
@@ -215,31 +215,31 @@ def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     return out.dropna()
 
 
-def bar_close_times(df: pd.DataFrame, rule: str) -> pd.Series:
+def BarCloseTimes(df: pd.DataFrame, rule: str) -> pd.Series:
     """Time at which each bar is complete (used to avoid look-ahead across timeframes)."""
     if rule.upper() in ("1D", "D"):
         return pd.Series(df.index, index=df.index)
     return pd.Series(df.index + pd.Timedelta(rule), index=df.index)
 
 
-def load_nq(intervals=("1h",), refresh: bool = True) -> dict[str, pd.DataFrame]:
+def LoadNq(intervals=("1h",), refresh: bool = True) -> dict[str, pd.DataFrame]:
     """Fetch, clean and roll-adjust NQ bars for each requested interval."""
     out = {}
-    base, rolls = roll_adjust(fetch("1h", refresh=refresh))
+    base, rolls = RollAdjust(Fetch("1h", refresh=refresh))
     out["1h"] = base
     out["rolls"] = rolls
     for iv in intervals:
         if iv == "1h":
             continue
-        if iv == "15m" and cache_path("5m").exists():
+        if iv == "15m" and CachePath("5m").exists():
             # 5m history reaches further back (imported tapes); 15m = resampled 5m
-            out[iv] = resample(roll_adjust(fetch("5m", refresh=refresh), rolls)[0], "15min")
+            out[iv] = Resample(RollAdjust(Fetch("5m", refresh=refresh), rolls)[0], "15min")
             continue
-        out[iv] = roll_adjust(fetch(iv, refresh=refresh), rolls)[0]
+        out[iv] = RollAdjust(Fetch(iv, refresh=refresh), rolls)[0]
     return out
 
 
-def splice(long_h1: pd.DataFrame, recent: pd.DataFrame) -> pd.DataFrame:
+def Splice(long_h1: pd.DataFrame, recent: pd.DataFrame) -> pd.DataFrame:
     """Prepend older 1h history to a (more accurate) recent 1h series.
 
     The older series is shifted by the median close difference over the overlap,
@@ -254,20 +254,20 @@ def splice(long_h1: pd.DataFrame, recent: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([older, recent]).sort_index()
 
 
-def frames_from_1m(m1: pd.DataFrame, long_h1: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+def FramesFrom1m(m1: pd.DataFrame, long_h1: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
     """Build every timeframe from one continuous 1m series (e.g. IBKR).
 
     ``long_h1`` (Yahoo, roll-adjusted) only supplies history *before* the 1m
     series starts, so higher-timeframe bias has enough warm-up.
     """
-    h1 = resample(m1, "1h")
+    h1 = Resample(m1, "1h")
     if long_h1 is not None:
-        h1 = splice(long_h1, h1)
-    return {"1m": m1, "5m": resample(m1, "5min"), "15m": resample(m1, "15min"), "1h": h1}
+        h1 = Splice(long_h1, h1)
+    return {"1m": m1, "5m": Resample(m1, "5min"), "15m": Resample(m1, "15min"), "1h": h1}
 
 
 
 __all__ = [
-    "fetch", "load_csv", "load_nq", "roll_adjust", "detect_rolls", "resample",
-    "trading_day", "bar_close_times", "Roll",
+    "Fetch", "LoadCsv", "LoadNq", "RollAdjust", "DetectRolls", "Resample",
+    "TradingDay", "BarCloseTimes", "Roll",
 ]

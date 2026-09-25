@@ -8,27 +8,27 @@ from pathlib import Path
 import pandas as pd
 
 from .backtest import Result
-from .metrics import by_book, goal_check, monthly, summarize
+from .metrics import ByBook, GoalCheck, Monthly, Summarize
 
 
-def _fmt(v):
+def _Fmt(v):
     if isinstance(v, float):
         return f"{v:,.2f}"
     return str(v)
 
 
-def write(res: Result, outdir: Path | str, title: str) -> dict:
+def Write(res: Result, outdir: Path | str, title: str) -> dict:
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
-    s = summarize(res)
-    goals = goal_check(s)
+    s = Summarize(res)
+    goals = GoalCheck(s)
     res.trades.to_csv(out / "trades.csv", index=False)
     (out / "summary.json").write_text(json.dumps({"summary": s, "goals": goals}, indent=2, default=float))
-    bb = by_book(res)
-    mo = monthly(res)
+    bb = ByBook(res)
+    mo = Monthly(res)
 
     lines = [f"# {title}", "", "| metric | value |", "|---|---|"]
-    lines += [f"| {k} | {_fmt(v)} |" for k, v in s.items()]
+    lines += [f"| {k} | {_Fmt(v)} |" for k, v in s.items()]
     lines += ["", "## Goals", "", "| goal | met |", "|---|---|"]
     lines += [f"| {k} | {'YES' if v else 'no'} |" for k, v in goals.items()]
     if not bb.empty:
@@ -36,11 +36,11 @@ def write(res: Result, outdir: Path | str, title: str) -> dict:
     if not mo.empty:
         lines += ["", "## Monthly P&L (USD)", "", mo.round(0).to_frame("pnl").to_markdown()]
     (out / "summary.md").write_text("\n".join(lines) + "\n")
-    _chart(res, out / "equity.png", title)
+    _Chart(res, out / "equity.png", title)
     return {"summary": s, "goals": goals}
 
 
-def _chart(res: Result, path: Path, title: str) -> None:
+def _Chart(res: Result, path: Path, title: str) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -65,7 +65,7 @@ def _chart(res: Result, path: Path, title: str) -> None:
     plt.close(fig)
 
 
-def trades_markdown(t: pd.DataFrame, n: int = 15) -> str:
+def TradesMarkdown(t: pd.DataFrame, n: int = 15) -> str:
     if t.empty:
         return "_no trades_"
     cols = ["book", "side", "entry_time", "entry", "stop", "tp1", "qty", "pnl", "r", "exit_reason"]

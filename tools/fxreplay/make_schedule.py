@@ -14,20 +14,20 @@ from rapier import data as D, replay as R
 from rapier.backtest import Market
 from rapier.brokers.base import SimBroker
 from rapier.executor import Executor, ExecConfig
-from rapier.live import engine_view
-from rapier.system import load_params
+from rapier.live import EngineView
+from rapier.system import LoadParams
 day=sys.argv[1]; adj=float(sys.argv[2]) if len(sys.argv)>2 else 0.0
 WORK=os.environ.get("FXR_WORK","fxreplay_work"); os.makedirs(f"{WORK}/sched",exist_ok=True)
-d=D.load_nq(('1h','1m','5m','15m'),refresh=False); fr={k:d[k] for k in ('1h','1m','5m','15m')}
-books=('teacher-1m','scalp-5m','ote-1h'); p=R.live_params(load_params(),books)
+d=D.LoadNq(('1h','1m','5m','15m'),refresh=False); fr={k:d[k] for k in ('1h','1m','5m','15m')}
+books=('teacher-1m','scalp-5m','ote-1h'); p=R.LiveParams(LoadParams(),books)
 sim=SimBroker(slip=0.25); ex=Executor(sim,ExecConfig(live_books=books,stale_after=pd.Timedelta('10min')))
 m1=fr['1m']; ev=[]
 for t in m1.loc[f'{day} 08:00':f'{day} 16:45'].index:
-    r=m1.loc[t]; sim.on_bar(t,r.open,r.high,r.low,r.close)
+    r=m1.loc[t]; sim.OnBar(t,r.open,r.high,r.low,r.close)
     cut=t+pd.Timedelta('1min')
     sl={k:f[(f.index<cut)&(f.index>=cut-pd.Timedelta(days=4 if k!='1h' else 300))] for k,f in fr.items()}
-    v,_=engine_view(Market.from_1h(sl['1h'],{k:sl[k] for k in ('1m','5m','15m')},base_tf='1m'),p,lookback_days=3)
-    for msg in ex.step(v,wall=cut+pd.Timedelta(seconds=3)):
+    v,_=EngineView(Market.From1h(sl['1h'],{k:sl[k] for k in ('1m','5m','15m')},base_tf='1m'),p,lookback_days=3)
+    for msg in ex.Step(v,wall=cut+pd.Timedelta(seconds=3)):
         if msg.startswith(('PLACE','CANCEL','REPRICE','FLATTEN','KILL')): ev.append((str(cut.time())[:5],msg))
 for tm,msg in ev: print(tm,msg)
 print('SIM TRADES'); 

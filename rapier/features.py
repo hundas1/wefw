@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 
 from . import data as D
-from .indicators import last_confirmed, pivots
+from .indicators import LastConfirmed, Pivots
 
 
-def context(base: pd.DataFrame, daily: pd.DataFrame, k_daily: int = 2) -> pd.DataFrame:
+def Context(base: pd.DataFrame, daily: pd.DataFrame, k_daily: int = 2) -> pd.DataFrame:
     """Per base bar:
 
     * ``pd_pos``   - close location inside the daily dealing range (last confirmed
@@ -18,7 +18,7 @@ def context(base: pd.DataFrame, daily: pd.DataFrame, k_daily: int = 2) -> pd.Dat
       prior day's low / high (a liquidity sweep).
     * ``vs_midnight`` / ``vs_dopen`` - close minus the 00:00 ET open / 18:00 session open.
     """
-    td = D.trading_day(base.index)
+    td = D.TradingDay(base.index)
     g = base.groupby(td)
     s_open = g["open"].transform("first").to_numpy()
     run_hi = g["high"].cummax().to_numpy()
@@ -27,7 +27,7 @@ def context(base: pd.DataFrame, daily: pd.DataFrame, k_daily: int = 2) -> pd.Dat
     # prior completed day's high/low (daily bars are stamped at their 17:00 close)
     dh = daily["high"].shift(1)
     dl = daily["low"].shift(1)
-    dkey = D.trading_day(daily.index - pd.Timedelta(hours=17))
+    dkey = D.TradingDay(daily.index - pd.Timedelta(hours=17))
     pdh = pd.Series(dh.to_numpy(), index=dkey).reindex(td).to_numpy()
     pdl = pd.Series(dl.to_numpy(), index=dkey).reindex(td).to_numpy()
 
@@ -39,8 +39,8 @@ def context(base: pd.DataFrame, daily: pd.DataFrame, k_daily: int = 2) -> pd.Dat
 
     # daily dealing range from confirmed daily swings, as of each base bar
     h, l = daily["high"].to_numpy(), daily["low"].to_numpy()
-    ph, pl = pivots(h, l, k_daily)
-    lh, ll = last_confirmed(ph, k_daily), last_confirmed(pl, k_daily)
+    ph, pl = Pivots(h, l, k_daily)
+    lh, ll = LastConfirmed(ph, k_daily), LastConfirmed(pl, k_daily)
     rng_hi = np.where(lh >= 0, h[np.maximum(lh, 0)], np.nan)
     rng_lo = np.where(ll >= 0, l[np.maximum(ll, 0)], np.nan)
     di = np.searchsorted(daily.index.asi8, base.index.asi8, side="right") - 1
