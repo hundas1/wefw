@@ -120,8 +120,9 @@ class Executor:
         return None
 
     def _place(self, key: str, book: str, side: int, mnq: int, entry, stop, target, last, out,
-               ref_entry: float | None = None) -> bool:
-        """``entry=None`` sends a market entry; ``ref_entry`` is the engine's price for it."""
+               ref_entry: float | None = None, r_mult: float | None = None) -> bool:
+        """``entry=None`` sends a market entry; ``ref_entry`` is the engine's price for it and
+        ``r_mult`` its planned reward:risk, re-applied to the real fill where the broker allows."""
         qty = self._qty(mnq)
         if qty < 1:
             self._note(f"skip {key}: size {mnq} MNQ is below one {self.broker.name} contract", out, f"small:{key}")
@@ -137,11 +138,37 @@ class Executor:
         self.state["orders"][key] = {"attempt": rec["attempt"] + 1, "prefix": prefix, "book": book,
                                      "status": "sent", "side": side, "qty": qty,
                                      "levels": [None if entry is None else round_tick(entry),
-                                                round_tick(stop), round_tick(target)]}
+                                                round_tick(stop), round_tick(target)],
+                                     "r_mult": r_mult}
         self._note(f"PLACE {book} {'BUY' if side > 0 else 'SELL'} x{qty} "
                    f"entry={'MKT' if entry is None else round_tick(entry)} stop={round_tick(stop)} "
                    f"target={round_tick(target)} [{prefix}]", out)
         return True
+
+    def _reanchor_targets(self, out: list) -> None:
+        """Market entries fill away from the engine's price (FX Replay: -8..+17 ticks), so move
+        each filled market bracket's target to the planned R measured from the actual fill."""
+        fill_price = getattr(self.broker, "fill_price", None)
+        amend = getattr(self.broker, "amend_target", None)
+        if not (fill_price and amend):
+            return  # e.g. Tradara: no documented amend; the static slippage pad stays
+        active = {p for p, g in self.broker.groups().items() if g["state"] == "active"}
+        for rec in self.state["orders"].values():
+            p = rec.get("prefix")
+            if rec.get("r_mult") is None or rec.get("reanchored") or p not in active:
+                continue
+            fill = fill_price(p)
+            if fill is None:
+                continue
+            rec["reanchored"] = True
+            side, stop, old = rec["side"], rec["levels"][1], rec["levels"][2]
+            if side * (fill - stop) <= 0:
+                continue  # filled through the stop; the stop order handles it
+            new = round_out(fill + side * rec["r_mult"] * abs(fill - stop), side)
+            if new != old and amend(p, new):
+                rec["levels"][2] = new
+                self._note(f"AMEND {p}: filled {fill}, target {old} -> {new} "
+                           f"({rec['r_mult']:.2f}R from the actual fill)", out)
 
     def _kill(self, reason: str, day: str, out: list) -> None:
         self.broker.flatten()
@@ -202,12 +229,15 @@ class Executor:
             key = f"{t.book}:{t.side}:{t.entry_time}"
             if t.book in v.confirm_books and t.entry_time == v.last_bar and pos == 0 and key not in self.state["orders"]:
                 pad = 2 * self.cfg.market_slip_ticks * 0.25
+                r_mult = t.side * (t.tp1 - t.entry) / abs(t.entry - t.cur_stop)
                 if self._place(key, t.book, t.side, t.qty, None, t.cur_stop, round_out(t.tp1 + t.side * pad, t.side),
-                               v.last_close, out, ref_entry=t.entry):
+                               v.last_close, out, ref_entry=t.entry, r_mult=r_mult):
                     pos = t.side  # treat as filled for the OCA logic below
+                    self._reanchor_targets(out)
 
         # one position at a time: a live position cancels every other working entry
         if pos:
+            self._reanchor_targets(out)
             for p, g in groups.items():
                 if g["state"] == "working":
                     self.broker.cancel(p)

@@ -199,6 +199,7 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
     f_sph = feat["swept_pdh"].fillna(False).to_numpy(dtype=bool)
     t_ns = base.index.asi8
     o, h, l, c = (base[x].to_numpy() for x in ("open", "high", "low", "close"))
+    bar_len = base.index.to_series().diff().median() if len(base) > 1 else pd.Timedelta(0)
     base_delta = pd.Timedelta(mkt.base.index.to_series().diff().mode().iloc[0])
     hours = (base.index.hour + base.index.minute / 60).to_numpy()
     end_hours = hours + base_delta / pd.Timedelta("1h")
@@ -328,7 +329,11 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
                     pending.pop(bi_)
                 elif side * (c[i] - o[i]) > 0 and side * (c[i] - pd_["E"]) > 0:
                     pending.pop(bi_)
-                    entry = c[i] + side * slip
+                    # the market order goes out after this close and fills at the next bar's
+                    # open (FX Replay showed up to 17 ticks between the two); a session gap
+                    # falls back to the close
+                    contiguous = i + 1 < len(o) and base.index[i + 1] - when <= 2 * bar_len
+                    entry = (o[i + 1] if contiguous else c[i]) + side * slip
                     if pd_["cfg"].fixed_stop_pts:
                         stop = entry - side * pd_["cfg"].fixed_stop_pts
                     _open(pd_["cfg"], bi_, side, entry, stop, pd_["H"], pd_["D"], when, i,

@@ -63,17 +63,19 @@ The final parameters live in [`rapier/rapier_config.json`](rapier/rapier_config.
 
 All numbers are after commissions ($1.50 per micro round turn) and 1-tick slippage on stops, with a
 conservative fill model (see *Backtest realism*). Drawdown is marked to the worst intrabar price.
+Market entries (confirmation books such as `scalp-5m`) fill at the **next bar's open** plus 1 tick, not at
+the signal close. FX Replay verification showed live market fills landing up to 17 ticks from the close.
 
 | run | period | trades | win rate | net | max DD | best trade | PF |
 |---|---|---|---|---|---|---|---|
 | **Main (requested window)** | 2025-07-26 → 2026-09-24 | 20 | **60.0%** | **+$2,793** | **$892** | $1,614 | 2.25 |
 | Out-of-sample (never optimised on) | 2024-06-15 → 2025-07-25 | 32 | 65.6% | +$1,925 | $992 | $400 | 1.70 |
-| Books up to 5m, 5m clock | 2026-06-26 → 2026-09-24 | 29 | 72.4% | +$2,710 | $754 | $246 | 2.80 |
-| All books incl. teacher-1m, 1m clock | 2026-08-24 → 2026-09-24 | 44 | 65.9% | +$2,503 | $819 | $242 | 1.76 |
+| Books up to 5m, 5m clock | 2026-06-26 → 2026-09-24 | 29 | 72.4% | +$2,551 | $668 | $244 | 2.69 |
+| All books incl. teacher-1m, 1m clock | 2026-08-24 → 2026-09-24 | 44 | 65.9% | +$2,454 | $819 | $237 | 1.75 |
 | Swing-overnight variant | 2025-07-26 → 2026-09-24 | 19 | 63.2% | +$3,881 | $1,791 | $3,287 | 2.73 |
 
 Per book:
-* **`scalp-5m`:** 28 trades, 75% WR, +$2,970.
+* **`scalp-5m`:** 28 trades, 75% WR, +$2,811.
   * Its settings were frozen before the 2026-06-26 → 07-19 tape was imported. On that unseen slice it won 6 of 7.
   * Selection period (07-20 → 08-21): 8 of 11.
   * Check period (08-22 → 09-24): 7 of 10.
@@ -190,6 +192,9 @@ IB Gateway (read-only API)  ->  rapier trade  ->  executor + safety rails  ->  T
   desired state, and the executor sends only the difference:
   * places or cancels resting OTE limits;
   * sends a market bracket when a confirmation book enters;
+  * once that market entry fills, moves its target so the planned R is measured from the **actual fill**
+    (IBKR and the simulator). Tradara has no documented order-modify endpoint, so it keeps a static
+    2-tick target pad instead;
   * cancels all other entries once a position is open;
   * flattens at each book's flat time and at 16:40 ET.
 * **Replay-verified.** `rapier.replay` walks history one closed 1m bar at a time through engine ->
@@ -212,7 +217,8 @@ IB Gateway (read-only API)  ->  rapier trade  ->  executor + safety rails  ->  T
 | daily loss kill switch | at -$600 (configurable) it cancels, flattens and stays off until the next trading day |
 | stale data | no new bar for 3 minutes -> working entries cancelled, nothing new sent |
 | order sanity | entry within 3% of market, stop/target on the right side, target >= 1R after tick rounding, size caps |
-| one position at a time | a position cancels every other working entry (IBKR paper uses a native OCA group) |
+| one position at a time | a position cancels every other working entry. IBKR uses a native OCA group; on Tradara the executor cancels the others on its next 1-minute cycle |
+| >= 1R from the real fill | market-entry targets are re-anchored on the broker's reported fill price (where the broker supports it) |
 | idempotent | deterministic `rp-` order ids and state file: a restart never duplicates an order, and a signal that vanished (filled) is never re-sent |
 
 ### Setup (on the machine running IB Gateway)

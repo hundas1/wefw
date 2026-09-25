@@ -143,3 +143,25 @@ def test_frames_from_1m_splices_long_history():
     assert fr["1h"].index[0] == h1.index[0]
     assert fr["1h"].close.loc[: "2026-09-14 08:00"].eq(100.0).all()  # shifted by the overlap difference
     assert set(fr) == {"1m", "5m", "15m", "1h"}
+
+
+def test_ibkr_fill_price_and_target_amend():
+    from types import SimpleNamespace as NS
+
+    from rapier.brokers.ibkr import IBKRBroker
+
+    def trade(pid, typ, status, avg=0.0, px=None):
+        o = NS(orderRef="rp-a", parentId=pid, orderType=typ, lmtPrice=px, transmit=False)
+        return NS(order=o, orderStatus=NS(status=status, avgFillPrice=avg), isDone=lambda: status == "Filled")
+
+    parent, tp = trade(0, "MKT", "Filled", 20014.5), trade(1, "LMT", "Submitted", px=20041.5)
+    placed = []
+    ib = NS(isConnected=lambda: True, trades=lambda: [parent, tp, trade(1, "STP", "Submitted")],
+            placeOrder=lambda c, o: placed.append(o), sleep=lambda s: None)
+    b = IBKRBroker(ib=ib)
+    b._c = NS(conId=1)
+    b.contract = lambda: b._c
+    assert b.fill_price("rp-a") == 20014.5
+    assert b.fill_price("rp-zz") is None
+    assert b.amend_target("rp-a", 20049.0) and placed == [tp.order]
+    assert tp.order.lmtPrice == 20049.0 and tp.order.transmit

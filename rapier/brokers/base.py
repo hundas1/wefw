@@ -52,6 +52,9 @@ class Broker(Protocol):
     def cancel(self, prefix: str) -> None: ...
     def flatten(self) -> None: ...
     def day_pnl(self) -> float | None: ...
+    # optional: brokers that can report entry fills and move a working target implement
+    #   fill_price(prefix) -> float | None   and   amend_target(prefix, target) -> bool
+    # so the executor can re-anchor a market entry's target on the real fill price
 
 
 class DryRunBroker:
@@ -122,6 +125,7 @@ class SimBroker:
     thru: float = TICK
     units_per_contract: int = 1
     name: str = "sim"
+    oca: bool = True  # False mimics Tradara: separate OTOCO groups, no cross-cancel
     _g: dict = field(default_factory=dict)
     _pos: int = 0
     _flatten: bool = False
@@ -143,6 +147,17 @@ class SimBroker:
         g = self._g.get(prefix)
         if g and g.state == "working":
             g.state = "cancelled"
+
+    def fill_price(self, prefix):
+        g = self._g.get(prefix)
+        return g.fill if g and g.state == "active" else None
+
+    def amend_target(self, prefix, target):
+        g = self._g.get(prefix)
+        if not (g and g.state == "active"):
+            return False
+        g.target = target
+        return True
 
     def flatten(self):
         self._flatten = True
@@ -174,7 +189,7 @@ class SimBroker:
                 elif g.side * (favor - g.target) >= 0:
                     self._close(p, g, g.target, t, "target")
         for p, g in list(self._g.items()):
-            if g.state != "working" or self._pos != 0:
+            if g.state != "working" or (self.oca and self._pos != 0):
                 continue
             if g.entry is None:
                 g.fill = o + g.side * self.slip
@@ -184,15 +199,17 @@ class SimBroker:
                 continue
             g.state, g.fill_time = "active", t
             self._pos += g.side * g.qty
-            for q in self._g.values():  # OCA
-                if q is not g and q.state == "working":
-                    q.state = "cancelled"
+            if self.oca:
+                for q in self._g.values():
+                    if q is not g and q.state == "working":
+                        q.state = "cancelled"
             adverse = l if g.side > 0 else h
             if g.side * (adverse - g.stop) <= 0:
                 self._close(p, g, g.stop - g.side * self.slip, t, "stop")
             elif g.side * (c - g.target) >= 0 and g.entry is not None:
                 self._close(p, g, g.target, t, "target")
-            break
+            if self.oca:
+                break
 
 
 def _root_of(symbol: str) -> str:

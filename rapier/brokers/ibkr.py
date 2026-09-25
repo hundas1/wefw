@@ -93,6 +93,28 @@ class IBKRBroker:
             if t.order.orderRef == prefix:
                 self._conn().cancelOrder(t.order)
 
+    def _by_ref(self, prefix):
+        # trades() also holds finished orders; a filled parent drops out of openTrades()
+        return [t for t in self._conn().trades() if t.order.orderRef == prefix]
+
+    def fill_price(self, prefix):
+        for attempt in range(2):
+            for t in self._by_ref(prefix):
+                if t.order.parentId == 0 and t.orderStatus.status == "Filled" and t.orderStatus.avgFillPrice:
+                    return float(t.orderStatus.avgFillPrice)
+            if attempt == 0:
+                self._conn().sleep(0.5)  # let a just-sent market order's fill arrive
+        return None
+
+    def amend_target(self, prefix, target):
+        for t in self._by_ref(prefix):
+            if t.order.parentId != 0 and t.order.orderType == "LMT" and not t.isDone():
+                t.order.lmtPrice = round_tick(target)
+                t.order.transmit = True
+                self._conn().placeOrder(self.contract(), t.order)  # same orderId = modify
+                return True
+        return False
+
     def flatten(self):
         from ib_async import MarketOrder
 

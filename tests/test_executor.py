@@ -209,3 +209,41 @@ def test_state_persists_across_restart(tmp_path):
     assert json.loads(p.read_text())["orders"]["ote-1h:1:100"]["prefix"] == prefix_for("ote-1h:1:100")
     ex2 = Executor(b, state_path=p)
     assert ex2.step(view(armed=[limit()]), wall()) == []
+
+
+def _market_entry(broker, open_px):
+    ex = Executor(broker, ExecConfig(live_books=("scalp-5m",)))
+    tr = SimpleNamespace(book="scalp-5m", side=1, qty=5, entry=20010.25, cur_stop=19980.0, tp1=20040.5, entry_time=T0)
+    ex.step(view(open_trades=[tr], confirm_books=frozenset({"scalp-5m"})), wall())
+    if isinstance(broker, SimBroker):
+        broker.on_bar(T0 + pd.Timedelta("1min"), open_px, open_px + 0.5, open_px - 0.5, open_px)
+    t1 = T0 + pd.Timedelta("1min")
+    return ex, tr, ex.step(view(t1, open_trades=[tr], confirm_books=frozenset({"scalp-5m"})), wall(t1))
+
+
+def test_market_target_reanchored_on_adverse_fill():
+    # FX Replay case: a market entry filled 17 ticks worse than the engine price -> 0.87R
+    b = SimBroker()
+    ex, tr, out = _market_entry(b, 20014.25)
+    (g,) = b._g.values()
+    assert g.fill == 20014.5
+    assert any(m.startswith("AMEND") for m in out)
+    assert g.target - g.fill >= g.fill - g.stop  # >= 1R from the real fill
+    assert g.target == 20049.0
+    # done once: a later cycle leaves it alone
+    t2 = T0 + pd.Timedelta("2min")
+    assert not any("AMEND" in m for m in ex.step(view(t2, open_trades=[tr]), wall(t2)))
+
+
+def test_market_target_pad_removed_on_good_fill():
+    b = SimBroker()
+    _, _, out = _market_entry(b, 20008.0)
+    (g,) = b._g.values()
+    assert g.target - g.fill == pytest.approx(g.fill - g.stop, abs=0.25)
+
+
+def test_brokers_without_amend_keep_the_static_pad():
+    b = DryRunBroker()
+    _, _, out = _market_entry(b, 20014.25)
+    assert not any("AMEND" in m for m in out)
+    assert b.log[0][-1] == 20041.5  # tp1 + 2 x 2 ticks
