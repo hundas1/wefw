@@ -1,3 +1,4 @@
+"""Checks the owner's 1-minute 'teacher' OTE rules: no look-ahead, impulse size/shape, fixed stop, flat time, breakeven, and rejecting fake (upsampled) 1m data."""
 import numpy as np
 import pandas as pd
 

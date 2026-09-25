@@ -1,3 +1,4 @@
+"""Checks the live signal logic: armed orders match what the backtest fills, and signal names stay stable as the data window moves."""
 import copy
 
 import pandas as pd

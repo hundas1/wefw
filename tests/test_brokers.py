@@ -1,3 +1,4 @@
+"""Checks the broker adapters with fake APIs: Tradara order payloads, token refresh, account allowlist, IBKR fill/amend, and IBKR roll stitching."""
 import json
 import time
 

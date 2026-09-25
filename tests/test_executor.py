@@ -1,3 +1,4 @@
+"""Checks the executor (backtest answer -> real orders): safety rails, one-position rule, repricing, restarts, and market-entry target fixes."""
 import json
 from types import SimpleNamespace
 

@@ -1,3 +1,4 @@
+"""Checks the core engine on synthetic bars: no look-ahead, every trade >= 1R, stop wins a same-bar tie, 4h bar alignment, and contract-roll adjustment."""
 import numpy as np
 import pandas as pd
 import pytest

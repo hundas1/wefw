@@ -1,5 +1,7 @@
 # Prop Firm Rapier
 
+> **New here (person or AI)? Read [`START_HERE.md`](START_HERE.md) first:** a 5-minute map of the project, its status and next steps.
+
 A multi-timeframe **Bias + OTE** (ICT Optimal Trade Entry) trading bot for **NQ / Nasdaq-100 futures**,
 built for prop-firm rules (hard $2,000 drawdown, flat before the daily close, every trade planned at ≥ 1R).
 It is a rebuild of the "Bee Sid" NQ bot's golden-belt idea (bias → price action → OTE → targets) as a
@@ -276,4 +278,6 @@ rapier/replay.py      bar-by-bar replay of the live stack against a simulated br
 rapier/feeds/ibkr.py  IBKR read-only data: live 1m polling, 1m backfill, exact roll stitching
 rapier/brokers/       dry-run + simulator (base.py), Tradara REST (tradara.py), IBKR paper (ibkr.py)
 rapier/report.py      Markdown/JSON/CSV/PNG reports
+tools/fxreplay/       scripts that replay Rapier's orders on fxreplay.com (third-party check)
+docs/                 WHAT_WE_TRIED.md (tested ideas + results), verification/ (FX Replay evidence)
 ```
