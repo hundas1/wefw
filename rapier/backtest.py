@@ -127,7 +127,9 @@ class Result:
     equity: pd.DataFrame  # per base bar: close-MTM, worst intrabar
     books: tuple[BookConfig, ...]
     risk: RiskConfig
-    consumed: frozenset = frozenset()  # "book:side:anchor" limits already traded into
+    consumed: frozenset = frozenset()  # "book:side:<anchor time>" limits already traded into
+    open_trades: tuple = ()            # Trade objects still open at the end (close_at_end=False)
+    risk_scale: float = 1.0            # drawdown throttle in force at the end (0.5 or 1.0)
 
 
 class Market:
@@ -395,8 +397,10 @@ def run(mkt: Market, books: tuple[BookConfig, ...], risk: RiskConfig,
 
     tdf = pd.DataFrame([t.to_row() for t in trades])
     eq = pd.DataFrame({"equity": eq_close, "equity_low": eq_low}, index=base.index)
-    names = frozenset(f"{books[b].name}:{s}:{a}" for b, s, a in consumed)
-    return Result(tdf, eq, tuple(books), risk, names)
+    # keyed by anchor *timestamp*: bar indices shift when a live data window slides
+    names = frozenset(f"{books[b].name}:{s}:{ctx[b]['s'].index[a].isoformat()}" for b, s, a in consumed)
+    scale = 0.5 if risk.dd_throttle and peak - realized > risk.dd_throttle else 1.0
+    return Result(tdf, eq, tuple(books), risk, names, tuple(open_pos.values()), scale)
 
 
 def _open(cfg, bi_, side, fill, stop, H, Dleg, when, i, feat, trades, open_pos, day_count, td,

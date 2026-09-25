@@ -239,6 +239,33 @@ def load_nq(intervals=("1h",), refresh: bool = True) -> dict[str, pd.DataFrame]:
     return out
 
 
+def splice(long_h1: pd.DataFrame, recent: pd.DataFrame) -> pd.DataFrame:
+    """Prepend older 1h history to a (more accurate) recent 1h series.
+
+    The older series is shifted by the median close difference over the overlap,
+    so the two back-adjusted series line up at the join.
+    """
+    if long_h1.empty:
+        return recent
+    ov = recent["close"].reindex(long_h1.index).dropna()
+    shift = float((ov - long_h1["close"].reindex(ov.index)).median()) if len(ov) else 0.0
+    older = long_h1[long_h1.index < recent.index[0]].copy()
+    older[["open", "high", "low", "close"]] += round(shift * 4) / 4
+    return pd.concat([older, recent]).sort_index()
+
+
+def frames_from_1m(m1: pd.DataFrame, long_h1: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+    """Build every timeframe from one continuous 1m series (e.g. IBKR).
+
+    ``long_h1`` (Yahoo, roll-adjusted) only supplies history *before* the 1m
+    series starts, so higher-timeframe bias has enough warm-up.
+    """
+    h1 = resample(m1, "1h")
+    if long_h1 is not None:
+        h1 = splice(long_h1, h1)
+    return {"1m": m1, "5m": resample(m1, "5min"), "15m": resample(m1, "15min"), "1h": h1}
+
+
 
 __all__ = [
     "fetch", "load_csv", "load_nq", "roll_adjust", "detect_rolls", "resample",

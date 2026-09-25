@@ -132,6 +132,14 @@ The full archive of the original "Swing Coach" workspace was reviewed. Secrets s
   and back-adjusts history. Checked against the dated `NQZ26` contract: residual −7 to −36 pts
   after June 2026. Older checks are looser because `NQZ26` was illiquid. When a switch hides inside a weekend gap the
   adjustment uses theoretical carry (0.95% of price), which can be off by a few tens of points.
+* **Yahoo revises roll-week bars.** A refresh on 2026-09-25 removed the Sep 2025 contract flip-flop, so that roll
+  fell back to the estimated carry: 232.25 pts instead of the measured 244.25. Re-running the committed reports on
+  the refreshed data gives:
+  * main window: 21 trades, 61.9%, +$3,048 (committed: 20, 60.0%, +$2,793);
+  * out-of-sample year: +$1,911 (committed: +$1,925).
+
+  The committed `results/` are the snapshot described above. For exact history use `rapier ibkr-backfill`, which
+  stitches dated contracts at the *measured* roll spread.
 * Market data is not committed (`data/` is git-ignored).
 
 ## Backtest realism
@@ -147,7 +155,7 @@ The full archive of the original "Swing Coach" workspace was reviewed. Secrets s
 ## Usage
 
 ```bash
-uv venv && uv pip install -e '.[dev]'
+uv venv && uv pip install -e '.[dev,ibkr]'
 rapier fetch                                   # download / extend the bar cache
 rapier import 1m old_tape.csv                  # merge saved tapes (upsampled days are rejected)
 rapier backtest --start 2025-07-26             # main report -> results/latest
@@ -155,16 +163,92 @@ rapier backtest --base 5m --start 2026-06-26   # adds the 5m scalp book
 rapier backtest --base 1m --start 2026-08-24   # adds the teacher 1m book
 rapier backtest --mode swing                   # let the swing book hold overnight
 rapier optimize --n 3000 --refine 4 --save     # re-run the refinement loop (IS + OOS guard)
-rapier live                                    # paper signal loop, every 5 min
+rapier live                                    # signal-only loop (no orders)
+rapier trade --broker tradara                  # live loop, dry run (see "Live trading")
 pytest
 ```
 
-`rapier live` re-runs the same engine each cycle, then prints/journals `LIMIT` (entry, stop, target, micros),
-`CANCEL`, `ENTRY` and `EXIT` events to `data/paper_journal.jsonl`. Set `RAPIER_DISCORD_WEBHOOK` to also
-post them to Discord. Checked against history: 20/20 backtest limit fills in the main window were announced
-as `LIMIT` orders before they filled. **It does not send real orders**. Connecting a broker (Tradovate,
-Rithmic, IBKR) needs your own credentials; implement the `Broker` protocol in `rapier/live.py`. If you share
-signals, remember CME real-time data redistribution rules.
+`rapier live` is the signal-only loop: it prints/journals `LIMIT` / `CANCEL` / `ENTRY` / `EXIT` events
+(optionally to Discord via `RAPIER_DISCORD_WEBHOOK`) and never sends orders. Real order routing is `rapier trade`, below.
+
+## Live trading: IBKR data -> Tradara orders
+
+```
+IB Gateway (read-only API)  ->  rapier trade  ->  executor + safety rails  ->  Tradara (Lucid account)
+   realtime 1m NQ bars          same engine as       one position, kill        OTOCO bracket: entry +
+   + 1m history backfill        the backtest         switch, EOD flatten       stop + target at the broker
+```
+
+* **Data: IBKR.** The API connection is opened **read-only**, so it can never place orders. Each minute,
+  3 seconds after the bar closes, it polls the completed 1m bars of the front NQ contract. At startup it
+  backfills the last ~45 days of 1m history from the dated contracts. It rolls to the next contract at the
+  Sunday 18:00 ET open of expiry week, the same roll the strategy was built and tested on.
+* **Orders: Tradara.** This is the Trading REST API the old Bee Sid bot already used for OTOCO brackets.
+  Every order is an OTOCO bracket, so the **stop and target sit on Tradara's servers**: an open position stays
+  protected if the bot, the PC or the connection dies.
+* **The executor mirrors the engine, it doesn't improvise.** After every closed bar the engine produces a
+  desired state, and the executor sends only the difference:
+  * places or cancels resting OTE limits;
+  * sends a market bracket when a confirmation book enters;
+  * cancels all other entries once a position is open;
+  * flattens at each book's flat time and at 16:40 ET.
+* **Replay-verified.** `rapier.replay` walks history one closed 1m bar at a time through engine ->
+  executor -> a simulated broker with the backtest's fill rules. It caught two live-only bugs that are now
+  fixed and covered by tests:
+  1. Signal keys changed as the data window slid, which caused endless cancel/replace.
+  2. Tick rounding could leave a target 0.25 short of 1R.
+
+  See the PR for the 24-day replay-vs-backtest result.
+
+### Safety rails
+
+| rail | behaviour |
+|---|---|
+| dry-run by default | without `--arm` it reads real broker state but only logs what it would send |
+| double opt-in | `--arm` **and** `RAPIER_I_UNDERSTAND_REAL_ORDERS=yes` |
+| realtime only | refuses to arm on the delayed Yahoo feed |
+| account allowlist | Tradara orders only to accounts in `RAPIER_TRADARA_ALLOWED_ACCOUNTS`; never uses account-wide flatten |
+| bracket books only | `teacher-1m`, `scalp-5m`, `ote-1h`. `swing-4h` (partials + trailing stop) stays signal-only until order modification is supported |
+| daily loss kill switch | at -$600 (configurable) it cancels, flattens and stays off until the next trading day |
+| stale data | no new bar for 3 minutes -> working entries cancelled, nothing new sent |
+| order sanity | entry within 3% of market, stop/target on the right side, target >= 1R after tick rounding, size caps |
+| one position at a time | a position cancels every other working entry (IBKR paper uses a native OCA group) |
+| idempotent | deterministic `rp-` order ids and state file: a restart never duplicates an order, and a signal that vanished (filled) is never re-sent |
+
+### Setup (on the machine running IB Gateway)
+
+```bash
+# 1. IB Gateway: Configure -> API -> enable socket clients, trusted IP 127.0.0.1,
+#    and tick "Read-Only API". Live port 4001 (paper 4002).
+cp .env.example .env    # fill in; never commit it
+set -a; source .env; set +a
+
+# 2. Longer, exact history (also fixes the small-sample problem: ~14 months of real 1m)
+rapier ibkr-backfill --start 2025-06-01          # resumable, ~1 request / 10.5 s (IBKR pacing)
+rapier backtest --source ibkr --base 1m --start 2025-07-26 --out results/ibkr_1m
+
+# 3. Tradara login (opens the OAuth page; the code is pasted only into your terminal)
+rapier tradara-login
+rapier broker-check --broker tradara             # account, contract, balance, position - sends nothing
+
+# 4. Rehearse: dry run for a few sessions, then an IBKR paper account, then Tradara
+rapier trade --broker tradara                    # dry run against the real account state
+rapier trade --broker ibkr-paper --arm           # real orders, but only to an IBKR paper (DU...) account
+RAPIER_I_UNDERSTAND_REAL_ORDERS=yes rapier trade --broker tradara --arm --max-qty 3
+```
+
+**Before arming on a funded account:**
+
+* **Prop-firm rules.** Confirm your firm allows automated/API trading on your account type. The old bot
+  noted Tradara API access "typically needs a funded Lucid account, not eval".
+* **CME data licence.** Driving an automated system from CME data is *non-display use* under CME's licensing
+  policy. Non-professional subscribers license that through their data provider, so confirm with IBKR that
+  your subscription covers it. Keep Discord posts of live prices private (redistribution rules).
+* **Tradara tokens.** The old bot's refresh token died after a few days (HTTP 401) and a signal was missed.
+  `broker-check` must pass, and the loop reports auth failures to Discord. Brackets already at Tradara keep
+  protecting positions, but no new orders go out until you log in again.
+* **Size.** Rapier sizes in MNQ micros. Trading full NQ (`RAPIER_ROOT=NQ`) divides by 10 and skips trades
+  that round to zero.
 
 Not financial advice. Backtests are not live results; prop-firm rules differ by firm, so check yours.
 
@@ -179,6 +263,11 @@ rapier/backtest.py    event-driven multi-book engine, prop risk rules, conservat
 rapier/metrics.py     stats + goal checks
 rapier/optimize.py    random + local search, ranked on the worse of IS/OOS
 rapier/system.py      params -> books
-rapier/live.py        paper/live signal loop
+rapier/live.py        signal loop + engine_view (the engine's desired state for the executor)
+rapier/executor.py    mirrors the engine onto a broker; all safety rails
+rapier/trader.py      live loop: IBKR bars -> engine -> executor -> broker
+rapier/replay.py      bar-by-bar replay of the live stack against a simulated broker
+rapier/feeds/ibkr.py  IBKR read-only data: live 1m polling, 1m backfill, exact roll stitching
+rapier/brokers/       dry-run + simulator (base.py), Tradara REST (tradara.py), IBKR paper (ibkr.py)
 rapier/report.py      Markdown/JSON/CSV/PNG reports
 ```

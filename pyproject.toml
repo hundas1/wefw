@@ -9,10 +9,12 @@ dependencies = [
     "yfinance>=0.2.50",
     "matplotlib>=3.8",
     "tabulate>=0.9",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+ibkr = ["ib_async>=2.0"]
 
 [project.scripts]
 rapier = "rapier.cli:main"

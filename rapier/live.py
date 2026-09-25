@@ -8,9 +8,8 @@ from what the backtest would have done. It emits:
 * ``CANCEL`` - a previously armed limit that is no longer valid
 * ``ENTRY`` / ``EXIT`` - paper fills and exits
 
-Orders go to :class:`PaperBroker` (a JSONL journal). Routing real orders to a
-broker (Tradovate / Rithmic / IBKR) needs your own credentials and adapter;
-implement :class:`Broker` for that.
+Events go to :class:`PaperBroker` (a JSONL journal). Real order routing lives
+in :mod:`rapier.trader` / :mod:`rapier.executor`, which reuse :func:`engine_view`.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ import pandas as pd
 
 from . import data as D
 from .backtest import TF_DELTA, Market, _asof, _context_ok, run
+from .brokers.base import tick_bracket
 from .indicators import ema
 from .system import build, load_params
 
@@ -35,7 +35,7 @@ STATE = D.DATA_DIR / "live_state.json"
 JOURNAL = D.DATA_DIR / "paper_journal.jsonl"
 
 
-class Broker(Protocol):
+class EventSink(Protocol):
     def send(self, event: dict) -> None: ...
 
 
@@ -70,7 +70,8 @@ def build_market(params: dict, refresh: bool = True) -> Market:
     return Market.from_1h(d["1h"], frames, base_tf=min(lower, key=lambda x: int(x[:-1])) if lower else "1h")
 
 
-def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None) -> list[dict]:
+def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None,
+                 risk_scale: float | None = None) -> list[dict]:
     """Limits the engine would currently have resting, after bias/filter checks.
 
     ``consumed`` comes from a backtest run over recent history, so a limit is
@@ -80,7 +81,9 @@ def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None) -
     base = mkt.base
     if consumed is None:
         start = (base.index[-1] - pd.Timedelta(days=20)).strftime("%Y-%m-%d")
-        consumed = run(mkt, books, risk, start=start, close_at_end=False).consumed
+        res = run(mkt, books, risk, start=start, close_at_end=False)
+        consumed, risk_scale = res.consumed, res.risk_scale
+    risk_scale = 1.0 if risk_scale is None else risk_scale
     step = base.index.to_series().diff().mode().iloc[0]
     # "now" is the end of the last completed base bar, exactly what the backtest sees
     now_ns = np.array([(base.index[-1] + step).value])
@@ -100,7 +103,7 @@ def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None) -
             E = S["E"][k]
             if math.isnan(E) or not (bias == 2 or bias == side) or k - int(S["id"][k]) > b.max_age:
                 continue
-            key = f"{b.name}:{side}:{int(S['id'][k])}"
+            key = f"{b.name}:{side}:{s.index[int(S['id'][k])].isoformat()}"
             if key in consumed:
                 continue
             arr = lambda v: np.array([v])
@@ -114,15 +117,42 @@ def armed_orders(mkt: Market, params: dict, consumed: frozenset | None = None) -
                     continue
             stop = E - side * b.fixed_stop_pts if b.fixed_stop_pts else S["S"][k]
             risk_pts = side * (E - stop)
-            qty = min(risk.max_contracts, int(b.risk_usd // (risk_pts * risk.point_value))) if risk_pts > 0 else 0
+            budget = b.risk_usd * risk_scale
+            qty = min(risk.max_contracts, int(budget // (risk_pts * risk.point_value))) if risk_pts > 0 else 0
+            e_r, s_r, t_r = tick_bracket(side, E, stop, b.tp1_r)
             out.append({"type": "LIMIT", "book": b.name, "side": "LONG" if side > 0 else "SHORT",
-                        "entry": round(E * 4) / 4, "stop": round(stop * 4) / 4,
-                        "tp1": round((E + side * b.tp1_r * risk_pts) * 4) / 4, "mnq": qty,
-                        "confirm": b.confirm, "key": f"{b.name}:{side}:{int(S['id'][k])}"})
+                        "entry": e_r, "stop": s_r, "tp1": t_r, "mnq": qty, "confirm": b.confirm, "key": key})
     return out
 
 
-def cycle(params: dict, broker: Broker, webhook: str | None, refresh: bool = True) -> list[dict]:
+def engine_view(mkt: Market, params: dict, lookback_days: int = 20):
+    """Run the engine up to the last completed bar and describe its desired state."""
+    from .executor import View
+
+    books, risk = build(params)
+    base = mkt.base
+    start = (base.index[-1] - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    res = run(mkt, books, risk, start=start, close_at_end=False)
+    step = base.index.to_series().diff().mode().iloc[0]
+    last = base.index[-1]
+    t = res.trades
+    forced, day_pnl = [], 0.0
+    if len(t):
+        closed = t[t.exit_time.notna()]
+        now_day = D.trading_day(pd.DatetimeIndex([last]))[0]
+        exits = pd.DatetimeIndex(pd.to_datetime(closed.exit_time))
+        day_pnl = float(closed.pnl[(D.trading_day(exits) == now_day)].sum()) if len(closed) else 0.0
+        last_exits = closed[(exits == last) & closed.exit_reason.isin(["eod", "flat", "time"])]
+        forced = last_exits[["book", "exit_reason"]].rename(columns={"exit_reason": "reason"}).to_dict("records")
+    view = View(now=last + step, last_bar=last, last_close=float(base.close.iloc[-1]),
+                armed=armed_orders(mkt, params, res.consumed, res.risk_scale), open_trades=list(res.open_trades),
+                forced_exits=forced, engine_day_pnl=day_pnl,
+                confirm_books=frozenset(b.name for b in books if b.confirm),
+                book_flat={b.name: b.flat_after for b in books if b.flat_after is not None})
+    return view, res
+
+
+def cycle(params: dict, broker: EventSink, webhook: str | None, refresh: bool = True) -> list[dict]:
     mkt = build_market(params, refresh=refresh)
     books, risk = build(params)
     start = mkt.base.index[-1] - pd.Timedelta(days=20)
@@ -140,7 +170,7 @@ def cycle(params: dict, broker: Broker, webhook: str | None, refresh: bool = Tru
             events.append({"type": "EXIT", "book": t.book, "time": t.exit_time, "price": t.exit_price,
                            "pnl": round(t.pnl, 2), "reason": t.exit_reason})
         state["trades"][key] = {"closed": bool(pd.notna(t.exit_time))}
-    orders = {o["key"]: o for o in armed_orders(mkt, params, res.consumed)}
+    orders = {o["key"]: o for o in armed_orders(mkt, params, res.consumed, res.risk_scale)}
     for key, o in orders.items():
         if key not in state["orders"]:
             events.append(o)
